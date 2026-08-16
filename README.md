@@ -35,34 +35,18 @@
 | youtube | 链接(含短链)                      | ✅​  | ❌️   | ✅​  |
 | tiktok  | 链接                              | ✅​  | ❌️   | ❌️   |
 | twitter | 链接                              | ✅​  | ✅​  | ❌️   |
+| pixiv     | 链接(pixiv.net 作品/漫画/动图) | ❌  | ✅  | ❌  |
+| instagram | 链接(帖子/轮播图/Reels)        | ✅  | ✅  | ❌  |
+| booth     | 链接(booth.pm 商品)            | ❌  | ✅  | ❌  |
+| goodsmile | 链接(GoodSmile 商品页面)       | ❌  | ✅  | ❌  |
+| 小黑盒    | 链接(帖子/分享)                | ✅  | ✅  | ❌  |
+| 抖音直播  | 链接(直播间/回放)              | ❌  | ❌  | ❌  |
 
 支持的链接，可参考 [测试链接](https://github.com/fllesser/nonebot-plugin-parser/blob/master/tests/others/test_urls.md)
 
-## 🧭 本 fork 新增功能
-
-> [!NOTE]
-> 本仓库是 [nonebot-plugin-parser](https://github.com/fllesser/nonebot-plugin-parser) 的个人定制版，**默认渲染器为 `htmlrender`**(杂志/画报风格卡片)。
-
-在原有平台基础上，本 fork 额外支持：
-
-| 平台       | 说明                                     |
-| ---------- | ---------------------------------------- |
-| pixiv      | 画师作品(图片合集 / 漫画 / 动图)          |
-| Instagram  | 帖子 / 轮播图(通过 RapidAPI)             |
-| BOOTH      | 同人商品页面                              |
-| GoodSmile  | 手办 / 周边商品页面                      |
-| HeyBox     | 社区帖子                                  |
-| 抖音直播   | 直播 / 回放房间(封面、标题、主播、观看数) |
-
-其他定制点：
-
-- **抖音解析**：默认直连 web detail API(带 `open.douyin.com` 伪装头)，图集 / 图文 / 实况图统一走同一接口；API 失败时用 `DrissionPage` 浏览器兜底，拦截页面真实发出的 detail 请求以过风控。
-- **卡片渲染**：解析卡片按杂志 / 画报风格定制。
-- **安装**：`pip install git+https://github.com/ankoconmf/nonebot-plugin-parser-suan.git`
-
 ## 🎨 效果图
 
-本 fork 默认使用 `htmlrender` 渲染卡片(杂志/画报风格)；上游默认的 PIL 通用媒体卡片渲染效果图如下
+插件默认启用 PIL 实现的通用媒体卡片渲染，效果图如下
 
 <div align="center">
 
@@ -260,9 +244,9 @@ parser_max_size=90
 # 可选值: ["bilibili", "douyin", "kuaishou", "twitter", "youtube", "acfun", "tiktok", "weibo", "xiaohongshu"]
 parser_disabled_platforms='["twitter"]'
 
-# [可选] 渲染器类型, 本 fork 默认 "htmlrender"
+# [可选] 渲染器类型
 # 可选 "default"(无图片渲染), "common"(PIL 通用图片渲染), "htmlrender"(htmlrender), "htmlkit"(htmlkit, 暂不可用)
-parser_render_type="htmlrender"
+parser_render_type="common"
 
 # [可选] 是否在解析结果中附加原始URL
 parser_append_url=False
@@ -287,22 +271,6 @@ parser_emoji_style="facebook"
 
 # [可选] 是否启用群组黑名单模式(默认启用，即所有群聊的解析都是开启的)
 parser_group_blacklist_enabled=True
-
-# [本 fork] pixiv Cookie, 打开 pixiv.net 登录后复制浏览器 Cookie
-parser_pixiv_ck=""
-
-# [本 fork] pixiv refresh_token, 用于刷新 Cookie(可选)
-parser_pixiv_refresh_token=""
-
-# [本 fork] Instagram 解析使用的 RapidAPI Key / Host
-parser_instagram_rapidapi_key=""
-parser_instagram_rapidapi_host="instagram-looter2.p.rapidapi.com"
-
-# [本 fork] 抖音浏览器兜底(DrissionPage)的浏览器可执行文件路径, 留空则自动探测
-parser_browser_path=""
-
-# [本 fork] 浏览器兜底是否无头运行
-parser_headless=True
 
 ```
 
