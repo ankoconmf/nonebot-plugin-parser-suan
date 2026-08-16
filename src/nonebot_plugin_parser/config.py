@@ -22,8 +22,20 @@ class Config(BaseModel):
     """youtube cookies"""
     parser_xhs_ck: str | None = None
     """小红书 cookies"""
+    parser_pixiv_ck: str | None = None
+    """pixiv cookies(PHPSESSID 等), 用于解析 R18 作品"""
+    parser_pixiv_refresh_token: str | None = None
+    """pixiv refresh_token, 用于走 app API 解析 R18 作品(推荐)"""
+    parser_pixiv_skip_r18: bool = True
+    """是否屏蔽 R18 作品(不解析)"""
     parser_proxy: str | None = None
     """代理"""
+    parser_instagram_rapidapi_key: str | None = None
+    """Instagram RapidAPI Key（可在 NoneBot 插件配置中设置）"""
+    parser_instagram_rapidapi_host: str = "instagram-looter2.p.rapidapi.com"
+    """Instagram RapidAPI Host（默认 instagram-looter2.p.rapidapi.com）"""
+    parser_instagram_proxy: str | None = None
+    """Instagram 请求代理（可选，覆盖全局 proxy）"""
     parser_need_upload: bool = False
     """是否需要上传音频文件"""
     parser_use_base64: bool = False
@@ -56,8 +68,10 @@ class Config(BaseModel):
     """Pilmoji 表情 CDN"""
     parser_emoji_style: EmojiStyle = EmojiStyle.FACEBOOK
     """Pilmoji 表情样式"""
-    parser_group_blacklist_enabled: bool = True
-    """是否启用群组黑名单模式(默认启用，即所有群聊的解析都是开启的)"""
+    parser_browser_path: str | None = None
+    """浏览器(Chrome/Edge/Chromium)可执行文件路径, 留空则自动探测 (抖音图文/实况图解析需要)"""
+    parser_headless: bool = True
+    """浏览器是否使用无头模式"""
 
     @property
     def nickname(self) -> str:
@@ -125,9 +139,39 @@ class Config(BaseModel):
         return self.parser_xhs_ck
 
     @property
+    def pixiv_ck(self) -> str | None:
+        """pixiv cookies"""
+        return self.parser_pixiv_ck
+
+    @property
+    def pixiv_refresh_token(self) -> str | None:
+        """pixiv refresh_token"""
+        return self.parser_pixiv_refresh_token
+
+    @property
+    def pixiv_skip_r18(self) -> bool:
+        """是否屏蔽 R18 作品"""
+        return self.parser_pixiv_skip_r18
+
+    @property
     def proxy(self) -> str | None:
         """代理"""
         return self.parser_proxy
+
+    @property
+    def instagram_rapidapi_key(self) -> str | None:
+        """Instagram RapidAPI Key"""
+        return self.parser_instagram_rapidapi_key
+
+    @property
+    def instagram_rapidapi_host(self) -> str:
+        """Instagram RapidAPI Host"""
+        return self.parser_instagram_rapidapi_host
+
+    @property
+    def instagram_proxy(self) -> str | None:
+        """Instagram 请求代理（可选）"""
+        return self.parser_instagram_proxy
 
     @property
     def need_upload(self) -> bool:
@@ -185,9 +229,14 @@ class Config(BaseModel):
         return self.parser_emoji_style
 
     @property
-    def group_blacklist_enabled(self) -> bool:
-        """是否启用群组黑名单模式"""
-        return self.parser_group_blacklist_enabled
+    def browser_path(self) -> str | None:
+        """浏览器可执行文件路径"""
+        return self.parser_browser_path
+
+    @property
+    def headless(self) -> bool:
+        """浏览器是否使用无头模式"""
+        return self.parser_headless
 
 
 pconfig: Config = get_plugin_config(Config)

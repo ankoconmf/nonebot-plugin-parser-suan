@@ -3,6 +3,7 @@ from typing import ClassVar
 
 from .base import BaseParser, PlatformEnum, handle
 from .data import Author, Platform
+from .utils import fmt_stat
 from ..download import yt_dlp_downloader
 
 
@@ -28,9 +29,20 @@ class TikTokParser(BaseParser):
             duration=video_info.duration,
         )
 
+        stats = []
+        for icon, value, label in (
+            ("eye", video_info.view_count, "播放"),
+            ("like", video_info.like_count, "点赞"),
+            ("comment", video_info.comment_count, "评论"),
+            ("share", video_info.repost_count, "分享"),
+        ):
+            if value is not None:
+                stats.append({"icon": icon, "value": fmt_stat(value), "label": label})
+
         return self.result(
             title=video_info.title,
             author=Author(name=video_info.channel),
             contents=[video_content],
             timestamp=video_info.timestamp,
+            extra={"stats": stats} if stats else {},
         )

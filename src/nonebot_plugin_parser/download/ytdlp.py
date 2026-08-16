@@ -20,8 +20,6 @@ class VideoInfo(Struct):
     """频道名称"""
     uploader: str
     """上传者 id"""
-    duration: int
-    """时长"""
     timestamp: int
     """发布时间戳"""
     thumbnail: str
@@ -30,6 +28,25 @@ class VideoInfo(Struct):
     """简介"""
     channel_id: str
     """频道 id"""
+    duration: int | None = None
+    """时长 (直播/未开播时为 None)"""
+    view_count: int | None = None
+    """观看/播放数"""
+    concurrent_view_count: int | None = None
+    """直播实时观看人数"""
+    like_count: int | None = None
+    """点赞数"""
+    comment_count: int | None = None
+    """评论数"""
+    repost_count: int | None = None
+    """分享/转发数"""
+    live_status: str | None = None
+    """直播状态 (is_live/is_upcoming/was_live/not_live)"""
+
+    @property
+    def is_live(self) -> bool:
+        """是否为正在直播或预约中的直播"""
+        return self.live_status in ("is_live", "is_upcoming")
 
     @property
     def author_name(self) -> str:
@@ -79,6 +96,9 @@ class YtdlpDownloader:
 
         video_info = await self.extract_video_info(url, cookiefile)
         duration = video_info.duration
+        if duration is None:
+            logger.warning(f"视频时长未知 (直播), 取消下载: {url}")
+            raise IgnoreException
         if duration > pconfig.duration_maximum:
             logger.warning(f"视频时长 {duration} 秒, 超过 {pconfig.duration_maximum} 秒, 取消下载")
             raise IgnoreException

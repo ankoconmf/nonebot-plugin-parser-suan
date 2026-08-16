@@ -3,6 +3,8 @@ from re import sub
 from msgspec import Struct
 from msgspec.json import Decoder
 
+from ..utils import fmt_stat
+
 
 class LargeInPic(Struct):
     url: str
@@ -61,6 +63,22 @@ class WeiboData(Struct):
     pics: list[Pic] | None = None
     page_info: PageInfo | None = None
     retweeted_status: "WeiboData | None" = None  # 转发微博
+
+    attitudes_count: int = 0
+    """点赞"""
+    comments_count: int = 0
+    """评论"""
+    reposts_count: int = 0
+    """转发"""
+
+    @property
+    def stats_panel(self) -> list[dict[str, str]]:
+        """卡片底部互动数据面板 (点赞/评论/转发)"""
+        return [
+            {"icon": "like", "value": fmt_stat(self.attitudes_count), "label": "点赞"},
+            {"icon": "comment", "value": fmt_stat(self.comments_count), "label": "评论"},
+            {"icon": "share", "value": fmt_stat(self.reposts_count), "label": "转发"},
+        ]
 
     @property
     def title(self) -> str | None:

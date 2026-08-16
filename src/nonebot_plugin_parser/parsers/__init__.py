@@ -9,6 +9,11 @@ from .bilibili import BilibiliParser as BilibiliParser
 from .kuaishou import KuaiShouParser as KuaiShouParser
 from ..download import yt_dlp_downloader as yt_dlp_downloader
 from .xiaohongshu import XiaoHongShuParser as XiaoHongShuParser
+from .instagram import InstagramParser as InstagramParser
+from .pixiv import PixivParser as PixivParser
+from .booth import BoothParser as BoothParser
+from .heybox import HeyBoxParser as HeyBoxParser
+from .goodsmile import GoodSmileParser as GoodSmileParser
 
 if yt_dlp_downloader is not None:
     from .tiktok import TikTokParser as TikTokParser

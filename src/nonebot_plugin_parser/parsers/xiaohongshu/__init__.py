@@ -7,6 +7,14 @@ from nonebot import logger
 from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle, pconfig
 
 
+_TOPIC_MARKER = re.compile(r"[ \t]*(?:【话题】|\[话题\])")
+
+
+def _clean_description(text: str) -> str:
+    """移除小红书简介中的话题标记, 保留话题名称本身。"""
+    return _TOPIC_MARKER.sub("", text).rstrip()
+
+
 class XiaoHongShuParser(BaseParser):
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.XIAOHONGSHU, display_name="小红书")
 
@@ -33,7 +41,8 @@ class XiaoHongShuParser(BaseParser):
             self.headers["cookie"] = pconfig.xhs_ck
             self.ios_headers["cookie"] = pconfig.xhs_ck
 
-    @handle("xhslink", r"xhslink\.(com|cn)/[A-Za-z0-9._?%&+=/#@-]+")
+    @handle("xhslink.com", r"xhslink\.com/[A-Za-z0-9._?%&+=/#@-]+")
+    @handle("xhslink.cn", r"xhslink\.cn/[A-Za-z0-9._?%&+=/#@-]+")
     async def _parse_short_link(self, searched: re.Match[str]):
         url = f"https://{searched.group(0)}"
         return await self.parse_with_redirect(url, self.ios_headers)
@@ -75,19 +84,34 @@ class XiaoHongShuParser(BaseParser):
 
         author = self.create_author(note_detail.nickname, note_detail.avatar_url)
 
+        extra = {}
+        if stats := note_detail.stats_panel:
+            extra["stats"] = stats
+        if region := note_detail.ip_location:
+            extra["region"] = region
+
         result = self.result(
             author=author,
             title=note_detail.title,
-            text=note_detail.desc,
+            text=_clean_description(note_detail.desc),
+            timestamp=note_detail.timestamp,
+            extra=extra,
         )
 
         # 添加视频内容
         if note_detail.is_video:
             result.video = self.create_video(*note_detail.video_cover_duration)
 
-        # 添加图片内容
-        elif image_urls := note_detail.image_urls:
-            result.contents.extend(self.create_images(image_urls))
+        # 添加图片内容(实况图同时发视频, 走合并转发)
+        elif note_detail.imageList:
+            has_live = False
+            for image in note_detail.imageList:
+                if live_url := image.live_video_url:
+                    result.contents.append(self.create_video(live_url, image.urlDefault))
+                    has_live = True
+                result.contents.append(self.create_image(image.urlDefault))
+            if has_live:
+                result.extra["merge_videos"] = True
 
         return result
 
@@ -112,11 +136,16 @@ class XiaoHongShuParser(BaseParser):
 
         author = self.create_author(note_data.user.nickName, note_data.user.avatar)
 
+        extra = {}
+        if region := note_data.ip_location:
+            extra["region"] = region
+
         result = self.result(
             author=author,
             title=note_data.title,
-            text=note_data.desc,
-            timestamp=note_data.time // 1000,
+            text=_clean_description(note_data.desc),
+            timestamp=note_data.timestamp,
+            extra=extra,
         )
 
         if note_data.is_video:
@@ -132,8 +161,15 @@ class XiaoHongShuParser(BaseParser):
                 cover_url,
                 duration,
             )
-        elif img_urls := note_data.image_urls:
-            result.contents.extend(self.create_images(img_urls))
+        elif note_data.imageList:
+            has_live = False
+            for image in note_data.imageList:
+                if live_url := image.live_video_url:
+                    result.contents.append(self.create_video(live_url, image.url))
+                    has_live = True
+                result.contents.append(self.create_image(image.url))
+            if has_live:
+                result.extra["merge_videos"] = True
 
         return result
 

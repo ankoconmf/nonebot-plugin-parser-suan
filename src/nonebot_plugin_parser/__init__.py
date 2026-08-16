@@ -12,7 +12,7 @@ from .matchers import clear_result_cache
 
 __plugin_meta__ = PluginMetadata(
     name="链接分享解析 Alconna 版",
-    description="支持B站|抖音|快手|微博|小红书|YouTube|TikTok|Twitter|AcFun|NGA",
+    description="支持B站|抖音|快手|微博|小红书|YouTube|TikTok|Twitter|AcFun|NGA|pixiv",
     usage=(
         "发送支持平台的(BV号/链接/小程序/卡片)即可\n"
         "其他命令:\n"

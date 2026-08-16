@@ -2,6 +2,8 @@ from typing import Any
 
 from msgspec import Struct, convert
 
+from ..utils import fmt_stat
+
 
 class AuthorInfo(Struct):
     """作者信息"""
@@ -227,6 +229,29 @@ class DynamicInfo(Struct):
         if major := self.modules.major:
             return major.image_urls
         return []
+
+    @property
+    def stats_panel(self) -> list[dict[str, str]]:
+        """动态互动数据面板 (点赞/评论/转发)"""
+        if not self.modules.module_stat:
+            return []
+
+        stats = []
+        for key, icon, label in (
+            ("like", "like", "点赞"),
+            ("comment", "comment", "评论"),
+            ("forward", "share", "转发"),
+        ):
+            item = self.modules.module_stat.get(key)
+            if isinstance(item, dict) and item.get("count") is not None:
+                stats.append(
+                    {
+                        "icon": icon,
+                        "value": fmt_stat(item["count"]),
+                        "label": label,
+                    }
+                )
+        return stats
 
     def is_video(self) -> bool:
         """判断是否为视频动态"""

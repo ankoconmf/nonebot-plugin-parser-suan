@@ -194,11 +194,14 @@ class WeiBoParser(BaseParser):
 
         return self._collect_result(weibo_data)
 
-    def _collect_result(self, data: common.WeiboData):
+    def _collect_result(self, data: common.WeiboData, is_repost: bool = False):
         """收集微博数据并构建结果"""
 
         # 作者
         author = self.create_author(data.display_name, data.user.profile_image_url)
+
+        # 转发内容不显示统计面板
+        extra = {} if is_repost else {"stats": data.stats_panel}
 
         # 先以部分数据构建结果，后续再填充内容，避免使用临时变量
         result = self.result(
@@ -207,6 +210,7 @@ class WeiBoParser(BaseParser):
             author=author,
             timestamp=data.timestamp,
             url=data.url,
+            extra=extra,
         )
 
         # 主视频
@@ -222,7 +226,7 @@ class WeiBoParser(BaseParser):
 
         # 转发内容
         if data.retweeted_status:
-            result.repost = self._collect_result(data.retweeted_status)
+            result.repost = self._collect_result(data.retweeted_status, is_repost=True)
 
         return result
 

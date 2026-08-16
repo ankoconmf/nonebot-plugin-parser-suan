@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from msgspec import Struct
 
+from ..utils import fmt_stat, fmt_duration
 from .common import Upper
 
 
@@ -94,6 +95,25 @@ class VideoInfo(Struct):
             result_parts.append(f"{display_name} {formatted_value}")
 
         return " ".join(result_parts)
+
+    @property
+    def stats_panel(self) -> list[dict[str, str]]:
+        """卡片底部互动数据面板 (点赞/投币/收藏/转发/评论)"""
+        return [
+            {"icon": "like", "value": fmt_stat(self.stat.like), "label": "点赞"},
+            {"icon": "coin", "value": fmt_stat(self.stat.coin), "label": "投币"},
+            {"icon": "star", "value": fmt_stat(self.stat.favorite), "label": "收藏"},
+            {"icon": "share", "value": fmt_stat(self.stat.share), "label": "转发"},
+            {"icon": "comment", "value": fmt_stat(self.stat.reply), "label": "评论"},
+        ]
+
+    def meta_line(self, duration: int) -> list[dict[str, str]]:
+        """封面下 meta 行 (播放/弹幕/时长)"""
+        return [
+            {"icon": "eye", "text": fmt_stat(self.stat.view)},
+            {"icon": "danmaku", "text": fmt_stat(self.stat.danmaku)},
+            {"icon": "clock", "text": fmt_duration(duration)},
+        ]
 
     def extract_info_with_page(self, page_num: int = 1) -> PageInfo:
         """获取视频信息，包含页索引、标题、时长、封面

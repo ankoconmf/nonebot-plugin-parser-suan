@@ -8,6 +8,7 @@ from msgspec.json import Decoder
 
 from .base import BaseParser, PlatformEnum, handle
 from .data import Platform, ParseResult
+from .utils import fmt_stat
 from ..exception import ParseException
 
 
@@ -24,7 +25,7 @@ class MediaElement(Struct):
 
     @property
     def original_url(self) -> str:
-        return self.url + "?format=jpg&name=orig"
+        return self.url + "?format=jpg&name=4096x4096"
 
 
 class Article(Struct):
@@ -42,6 +43,8 @@ class VxTwitterResponse(Struct):
     user_name: str
     user_screen_name: str
     user_profile_image_url: str
+    retweets: int = 0
+    replies: int = 0
     qrt: "VxTwitterResponse | None" = None
     qrtURL: str | None = None
     media_extended: list[MediaElement] = field(default_factory=list)
@@ -49,6 +52,15 @@ class VxTwitterResponse(Struct):
     @property
     def name(self) -> str:
         return f"{self.user_name} @{self.user_screen_name}"
+
+    @property
+    def stats_panel(self) -> list[dict[str, str]]:
+        """卡片底部互动数据面板 (点赞/转推/回复)"""
+        return [
+            {"icon": "like", "value": fmt_stat(self.likes), "label": "点赞"},
+            {"icon": "share", "value": fmt_stat(self.retweets), "label": "转推"},
+            {"icon": "comment", "value": fmt_stat(self.replies), "label": "回复"},
+        ]
 
 
 decoder = Decoder(VxTwitterResponse)
@@ -73,15 +85,22 @@ class TwitterParser(BaseParser):
         data = decoder.decode(response.content)
         return self._collect_result(data)
 
-    def _collect_result(self, data: VxTwitterResponse) -> ParseResult:
+    def _collect_result(self, data: VxTwitterResponse, is_repost: bool = False) -> ParseResult:
         author = self.create_author(data.user_name, data.user_profile_image_url)
         title = data.article.title if isinstance(data.article, Article) else data.article
+
+        extra: dict[str, Any] = {}
+        # 转发内容不显示统计面板
+        if not is_repost:
+            extra["stats"] = data.stats_panel
+            extra["source_id"] = f"@{data.user_screen_name}"
 
         result = self.result(
             author=author,
             title=title,
             text=data.text,
             timestamp=data.date_epoch,
+            extra=extra,
         )
 
         for media in data.media_extended:
@@ -97,7 +116,7 @@ class TwitterParser(BaseParser):
                 result.contents.append(self.create_image(media.original_url))
 
         if data.qrt:
-            result.repost = self._collect_result(data.qrt)
+            result.repost = self._collect_result(data.qrt, is_repost=True)
 
         return result
 

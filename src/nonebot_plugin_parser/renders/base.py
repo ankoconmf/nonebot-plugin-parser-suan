@@ -57,7 +57,12 @@ class BaseRenderer(ABC):
                         mergeable_segs.append(UniHelper.img_seg(gif_path))
                     else:
                         thumbnail = await video.cover.safe_get() if video.cover else None
-                        yield UniMessage(UniHelper.video_seg(path, thumbnail))
+                        video_seg = UniHelper.video_seg(path, thumbnail)
+                        # 需要合并转发的视频(如抖音实况图)放入 other_segs, 由下方合并逻辑统一处理
+                        if self.result.extra.get("merge_videos"):
+                            other_segs.append(video_seg)
+                        else:
+                            yield UniMessage(video_seg)
                 case AudioContent():
                     yield UniMessage(UniHelper.record_seg(path))
                 case ImageContent():

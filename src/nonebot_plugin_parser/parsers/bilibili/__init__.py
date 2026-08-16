@@ -1,7 +1,9 @@
+import re
 import json
 import asyncio
 from re import Match
 from typing import ClassVar
+from urllib.parse import urlparse
 from collections.abc import AsyncGenerator
 
 from msgspec import convert
@@ -29,6 +31,43 @@ select_client("curl_cffi")
 # 模拟浏览器，第二参数数值参考 curl_cffi 文档
 # https://curl-cffi.readthedocs.io/en/latest/impersonate.html
 request_settings.set("impersonate", "chrome131")
+
+
+# PCDN / P2P 节点主机名特征 (这类节点对非官方客户端常返回 403 或无法连接)
+_PCDN_HOST_PATTERN = re.compile(r"(?:^|\.)(?:mcdn\.bilivideo\.cn|szbdyd\.com)$", re.IGNORECASE)
+# PCDN 路径特征
+_PCDN_PATH_PATTERN = re.compile(r"/(?:upgcxcode|v1/resource).*?(?:mcdn|pcdn)", re.IGNORECASE)
+# 私有 IP 段 (10.x / 172.16-31.x / 192.168.x / 127.x)
+_PRIVATE_IP_PATTERN = re.compile(
+    r"^(?:10\.|127\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)\d"
+)
+
+
+def is_pcdn_url(url: str) -> bool:
+    """判断链接是否指向 PCDN / P2P 节点或内网地址"""
+    if not url:
+        return False
+    host = urlparse(url).hostname or ""
+    if _PRIVATE_IP_PATTERN.match(host):
+        return True
+    if _PCDN_HOST_PATTERN.search(host):
+        return True
+    if _PCDN_PATH_PATTERN.search(url):
+        return True
+    return False
+
+
+def pick_clean_url(url: str, backup_url: list[str] | None) -> str:
+    """主链接为 PCDN 时, 从备用链接中挑第一个干净的顶上; 否则原样返回"""
+    if not is_pcdn_url(url):
+        return url
+    for backup in backup_url or []:
+        if not is_pcdn_url(backup):
+            logger.debug(f"检测到 PCDN 链接, 已切换到备用源: {urlparse(backup).hostname}")
+            return backup
+    # 一个干净的备用链接都没有, 只能用原链接
+    logger.warning("检测到 PCDN 链接, 但无可用备用源, 下载可能失败")
+    return url
 
 
 class BilibiliParser(BaseParser):
@@ -103,7 +142,7 @@ class BilibiliParser(BaseParser):
     ):
         """解析视频信息"""
 
-        from .video import VideoInfo, AIConclusion
+        from .video import VideoInfo
 
         video = Video(bvid=bvid, aid=avid, credential=await self.credential)
         video_info = convert(await video.get_info(), VideoInfo)
@@ -111,15 +150,6 @@ class BilibiliParser(BaseParser):
         author = self.create_author(video_info.owner.name, video_info.owner.face)
         # 处理分 p
         page_info = video_info.extract_info_with_page(page_num)
-
-        # 获取 AI 总结
-        if self._credential:
-            cid = await video.get_cid(page_info.index)
-            ai_conclusion = await video.get_ai_conclusion(cid)
-            ai_conclusion = convert(ai_conclusion, AIConclusion)
-            ai_summary = ai_conclusion.summary
-        else:
-            ai_summary: str = "哔哩哔哩 cookie 未配置或失效, 无法使用 AI 总结"
 
         url = f"https://bilibili.com/{video_info.bvid}"
         url += f"?p={page_info.index + 1}" if page_info.index > 0 else ""
@@ -161,7 +191,11 @@ class BilibiliParser(BaseParser):
             text=video_info.desc,
             author=author,
             contents=[video_content],
-            extra={"info": ai_summary},
+            extra={
+                "stats": video_info.stats_panel,
+                "meta": video_info.meta_line(page_info.duration),
+                "source_id": video_info.bvid,
+            },
         )
 
     async def parse_dynamic_or_opus(self, dynamic_id: int):
@@ -183,6 +217,8 @@ class BilibiliParser(BaseParser):
                 result = await self.parse_video(bvid=archive.bvid)
                 result.text = dynamic_info.text
                 result.extra["content_type"] = "动态"
+                if stats := dynamic_info.stats_panel:
+                    result.extra["stats"] = stats
                 return result
 
         # 下载图片
@@ -194,6 +230,10 @@ class BilibiliParser(BaseParser):
         if dynamic_info.type == "DYNAMIC_TYPE_FORWARD" and dynamic_info.orig is not None:
             repost = await self._parse_dynamic_info(dynamic_info.orig)
 
+        extra = {"content_type": "动态"}
+        if stats := dynamic_info.stats_panel:
+            extra["stats"] = stats
+
         return self.result(
             title=dynamic_info.title,
             text=dynamic_info.text,
@@ -201,7 +241,7 @@ class BilibiliParser(BaseParser):
             author=author,
             contents=contents,
             repost=repost,
-            extra={"content_type": "动态"},
+            extra=extra,
         )
 
     async def parse_opus_by_id(self, opus_id: int):
@@ -330,12 +370,14 @@ class BilibiliParser(BaseParser):
         if not isinstance(video_stream, VideoStreamDownloadURL):
             raise DownloadException("未找到可下载的视频流")
         logger.debug(f"视频流质量: {video_stream.video_quality.name}, 编码: {video_stream.video_codecs}")
+        video_url = pick_clean_url(video_stream.url, video_stream.backup_url)
 
         audio_stream = streams[1]
         if not isinstance(audio_stream, AudioStreamDownloadURL):
-            return video_stream.url, None
+            return video_url, None
         logger.debug(f"音频流质量: {audio_stream.audio_quality.name}")
-        return video_stream.url, audio_stream.url
+        audio_url = pick_clean_url(audio_stream.url, audio_stream.backup_url)
+        return video_url, audio_url
 
     def _save_credential(self):
         """存储哔哩哔哩登录凭证"""

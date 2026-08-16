@@ -46,7 +46,7 @@ class VideoContent(MediaContent):
 
     @property
     def display_duration(self) -> str | None:
-        return f"时长: {fmt_duration(self.duration)}" if self.duration else None
+        return fmt_duration(self.duration) if self.duration else None
 
     def __repr__(self) -> str:
         repr = f"VideoContent({self.path_task}"
@@ -109,6 +109,8 @@ class ParseResult:
     """文本内容"""
     timestamp: int | None = None
     """发布时间戳, 秒"""
+    datetime_text: str | None = None
+    """发布时间文本 (相对时间等, 优先于 timestamp 显示)"""
     url: str | None = None
     """来源链接"""
 
@@ -175,10 +177,14 @@ class ParseResult:
     @property
     def all_grid_images(self):
         """获取所有用于渲染图片网格的图片（视频封面 + 图片）"""
+        # 实况图场景: 视频和图片成对存在, 网格只取图片, 避免封面与图片重复
+        skip_video_cover = bool(self.extra.get("merge_videos")) and any(
+            isinstance(cont, ImageContent) for cont in self.contents
+        )
         covers: list[PathTask] = []
         for cont in self.contents:
             if isinstance(cont, VideoContent):
-                if cont.cover is not None:
+                if not skip_video_cover and cont.cover is not None:
                     covers.append(cont.cover)
             elif isinstance(cont, ImageContent):
                 covers.append(cont.path_task)
@@ -191,7 +197,9 @@ class ParseResult:
 
     @property
     def formartted_datetime(self, fmt: str = "%Y-%m-%d %H:%M:%S") -> str | None:
-        """格式化时间戳"""
+        """格式化时间戳, 若提供了时间文本则优先使用"""
+        if self.datetime_text is not None:
+            return self.datetime_text
         return datetime.fromtimestamp(self.timestamp).strftime(fmt) if self.timestamp is not None else None
 
     def _iterate_download_coros(
@@ -264,6 +272,7 @@ class ParseResultKwargs(TypedDict, total=False):
     contents: list[MediaContent]
     graphics: list[str | ImageContent]
     timestamp: int | None
+    datetime_text: str | None
     url: str | None
     author: Author | None
     extra: dict[str, Any]
