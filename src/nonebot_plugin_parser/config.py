@@ -56,7 +56,7 @@ class Config(BaseModel):
     """B站视频编码"""
     parser_bili_video_quality: VideoQuality = VideoQuality._1080P
     """B站视频分辨率"""
-    parser_render_type: RenderType = RenderType.common
+    parser_render_type: RenderType = RenderType.htmlrender
     """Renderer 类型"""
     parser_custom_font: str | None = None
     """自定义字体"""
