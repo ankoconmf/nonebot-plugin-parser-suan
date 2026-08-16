@@ -60,7 +60,8 @@
 ## 💿 安装
 
 > [!NOTE]
-> 把 `src/nonebot_plugin_parser` 文件夹复制到插件加载目录(比如 `src/plugins`)
+> 1. 把 `src/nonebot_plugin_parser` 文件夹复制到插件加载目录(比如 `src/plugins`)
+> 2. 安装依赖: `pip install -r requirements.txt`
 
 > [!Warning]
 > **如果你已经在使用 nonebot-plugin-resolver[2]，请在安装此插件前卸载**
