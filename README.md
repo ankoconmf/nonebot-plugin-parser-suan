@@ -50,10 +50,10 @@
 
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/ankoconmf/nonebot-plugin-parser-suan/refs/heads/resources/resources/1.png" width="160" />
-<img src="https://raw.githubusercontent.com/ankoconmf/nonebot-plugin-parser-suan/refs/heads/resources/resources/2.png" width="160" />
 <img src="https://raw.githubusercontent.com/ankoconmf/nonebot-plugin-parser-suan/refs/heads/resources/resources/3.png" width="160" />
 <img src="https://raw.githubusercontent.com/ankoconmf/nonebot-plugin-parser-suan/refs/heads/resources/resources/4.png" width="160" />
+<img src="https://raw.githubusercontent.com/ankoconmf/nonebot-plugin-parser-suan/refs/heads/resources/resources/1.png" width="160" />
+<img src="https://raw.githubusercontent.com/ankoconmf/nonebot-plugin-parser-suan/refs/heads/resources/resources/2.png" width="160" />
 
 </div>
 
