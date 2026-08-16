@@ -271,6 +271,28 @@ parser_emoji_style="facebook"
 # [可选] 是否启用群组黑名单模式(默认启用，即所有群聊的解析都是开启的)
 parser_group_blacklist_enabled=True
 
+# [本 fork] pixiv Cookie(PHPSESSID 等), 打开 pixiv.net 登录后复制浏览器 Cookie
+parser_pixiv_ck=""
+
+# [本 fork] pixiv refresh_token, 用于走 app API 解析 R18 作品(推荐)
+parser_pixiv_refresh_token=""
+
+# [本 fork] 是否屏蔽 pixiv R18 作品(不解析)
+parser_pixiv_skip_r18=True
+
+# [本 fork] Instagram 解析使用的 RapidAPI Key / Host
+parser_instagram_rapidapi_key=""
+parser_instagram_rapidapi_host="instagram-looter2.p.rapidapi.com"
+
+# [本 fork] Instagram 解析使用的代理
+parser_instagram_proxy=""
+
+# [本 fork] 抖音浏览器兜底(DrissionPage)的浏览器可执行文件路径, 留空则自动探测
+parser_browser_path=""
+
+# [本 fork] 浏览器兜底是否无头运行
+parser_headless=True
+
 ```
 
 </details>
