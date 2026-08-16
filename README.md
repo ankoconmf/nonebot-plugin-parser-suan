@@ -60,8 +60,7 @@
 ## 💿 安装
 
 > [!NOTE]
-> 先激活 nb 的虚拟环境，然后再安装
-> - **安装**：`pip install git+https://github.com/ankoconmf/nonebot-plugin-parser-suan.git`
+> 把 `src/nonebot_plugin_parser` 文件夹复制到插件加载目录(比如 `src/plugins`)
 
 > [!Warning]
 > **如果你已经在使用 nonebot-plugin-resolver[2]，请在安装此插件前卸载**
