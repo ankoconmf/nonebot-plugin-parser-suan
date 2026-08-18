@@ -40,7 +40,7 @@
 | booth     | 链接(booth.pm 商品)            | ❌  | ✅  | ❌  |
 | goodsmile | 链接(GoodSmile 商品页面)       | ❌  | ✅  | ❌  |
 | 小黑盒    | 链接(帖子/分享)                | ✅  | ✅  | ❌  |
-| 抖音直播  | 链接(直播间/回放)              | ❌  | ❌  | ❌  |
+| 抖音直播  | 链接(直播间/回放)              | ❌  | ✅  | ❌  |
 
 支持的链接，可参考 [测试链接](https://github.com/fllesser/nonebot-plugin-parser/blob/master/tests/others/test_urls.md)
 
