@@ -21,5 +21,8 @@ psutil>=5.9.0
 DrissionPage>=4.0.0
 
 # ── 可选依赖 ──
-# yt-dlp[default]>=2025.2.21   # YouTube / TikTok 视频下载
+# yt-dlp: YouTube / TikTok 视频下载
+# 临时修复 YouTube 解析, 固定到 yt-dlp 最新 commit(后续可回退到 PyPI 发行版)
+yt-dlp[default] @ git+https://github.com/yt-dlp/yt-dlp@5d5b634d8e6b41dc2891847a5ea7a5a3f569a28c
+
 # emosvg>=0.1.7                # emoji SVG 渲染(需系统 cairo)

@@ -68,10 +68,10 @@ Release = "https://github.com/ankoconmf/nonebot-plugin-parser-suan/releases"
 Repository = "https://github.com/ankoconmf/nonebot-plugin-parser-suan"
 
 [project.optional-dependencies]
-ytdlp = ["yt-dlp[default]>=2025.2.21"]
+ytdlp = ["yt-dlp[default] @ git+https://github.com/yt-dlp/yt-dlp@5d5b634d8e6b41dc2891847a5ea7a5a3f569a28c"]
 emosvg = ["emosvg>=0.1.7"]
 all = [
-  "yt-dlp[default]>=2025.2.21",
+  "yt-dlp[default] @ git+https://github.com/yt-dlp/yt-dlp@5d5b634d8e6b41dc2891847a5ea7a5a3f569a28c",
   "emosvg>=0.1.7",
 ]
 
