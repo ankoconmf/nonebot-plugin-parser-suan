@@ -63,8 +63,13 @@ class YtdlpDownloader:
             "quiet": True,
             "skip_download": "1",
             "force_generic_extractor": True,
+            "extractor_args": {"youtube": {"player_client": ["web_embedded"]}},
+            "remote_components": ["ejs:github"],
         }
-        self._download_base_opts: _Params = {}
+        self._download_base_opts: _Params = {
+            "extractor_args": {"youtube": {"player_client": ["web_embedded"]}},
+            "remote_components": ["ejs:github"],
+        }
         self._url_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         if proxy := pconfig.proxy:
             self._download_base_opts["proxy"] = proxy
