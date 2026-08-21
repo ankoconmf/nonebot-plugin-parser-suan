@@ -49,16 +49,22 @@ class QQZoneParser(BaseParser):
             if "groupalbum" in bizsrc or "群相册" in prompt or "群动态" in prompt:
                 raise asyncio.CancelledError("静默取消群相册解析")
 
-            title = data.get("title")
+            meta = data.get("meta", {}) or {}
+            video_meta = meta.get("video") or {}
+            miniapp_meta = meta.get("miniapp") or {}
+
+            title = data.get("title") or video_meta.get("title")
             desc = data.get("desc")
             source = data.get("source")
-            tag = data.get("tag")
-            preview = data.get("preview")
+            tag = data.get("tag") or video_meta.get("tag")
+            preview = data.get("preview") or video_meta.get("preview")
             legacy_url = data.get("legacyUrl")
             source_url = data.get("sourceUrl")
-            jump_url = data.get("meta", {}).get("miniapp", {}).get("jumpUrl")
+            jump_url = miniapp_meta.get("jumpUrl") or video_meta.get("jumpURL") or video_meta.get("jumpUrl")
             config = data.get("config", {})
             timestamp = config.get("ctime")
+            nickname = video_meta.get("nickname")
+            avatar = video_meta.get("avatar")
 
             text_segments = []
             if title:
@@ -87,6 +93,9 @@ class QQZoneParser(BaseParser):
                 url=url,
                 extra={"bizsrc": data.get("bizsrc", ""), "app": data.get("app", ""), "type": data.get("type", "")},
             )
+
+            if nickname:
+                result.author = self.create_author(nickname, avatar)
 
             if preview:
                 result.contents.append(self.create_image(preview, alt=title or tag))
@@ -196,6 +205,10 @@ class QQZoneParser(BaseParser):
             result.contents.extend(main_images)
         if videos:
             result.contents.extend(videos)
+
+        # 实况图: 视频与图片成对, 视频走合并转发 (与抖音一致)
+        if content.get("has_live_video"):
+            result.extra["merge_videos"] = True
 
         if repost_text or repost_images or repost_videos:
             repost_author = content.get("repost_author")
@@ -354,20 +367,26 @@ class QQZoneParser(BaseParser):
         # ========== 1. 解析隐藏 JSON 数据 ==========
         media = await self._extract_qzone_cell_pic_media(text)
         regex_media = await self._extract_qzone_cell_pic_media_from_text(text)
-        if not media["images"]:
+        live_photos = media.get("live_photos", [])
+        if not media["images"] and not live_photos:
             media["images"].extend(regex_media["images"])
-        if not media["videos"]:
+        if not media["videos"] and not live_photos:
             media["videos"].extend(regex_media["videos"])
             media["covers"].extend(regex_media.get("covers", []))
             
         # 双重保险：确保在极个别情况下通过 hash 补刀
         is_repost_post = is_repost_post or len(repost_hashes) > 0
         
+        # 封面绑定到视频: 封面不再作为独立图片, 避免视频动态被渲染成图片网格
+        cover_urls = [c for c in media.get("covers", []) if c]
+        cover_hashes = {self._get_qzone_hash(c) for c in cover_urls}
+        cover_by_index = cover_urls if len(media["videos"]) == len(cover_urls) else []
+        
         if media["images"]:
             for image_url, is_gif in media["images"]:
                 if image_url:
                     img_hash = self._get_qzone_hash(image_url)
-                    if img_hash in seen_hashes:
+                    if img_hash in seen_hashes or img_hash in cover_hashes:
                         continue
                     seen_hashes.add(img_hash)
                     
@@ -378,22 +397,52 @@ class QQZoneParser(BaseParser):
                     else:
                         main_images.append(img_obj)
                         
-        for cover_url in media.get("covers", []):
-            if cover_url:
-                seen_hashes.add(self._get_qzone_hash(cover_url))
+        for cover_url in cover_urls:
+            seen_hashes.add(self._get_qzone_hash(cover_url))
         
-        for video_url in media["videos"]:
+        for i, video_url in enumerate(media["videos"]):
             if video_url:
                 v_hash = self._get_qzone_hash(video_url)
                 if v_hash in seen_videos:
                     continue
                 seen_videos.add(v_hash)
                 
-                vid_obj = self.create_video(video_url)
+                cover = cover_by_index[i] if i < len(cover_by_index) else None
+                vid_obj = self.create_video(video_url, cover_url=cover)
                 if is_repost_post or v_hash in repost_hashes:
                     repost_videos.append(vid_obj)
                 else:
                     videos.append(vid_obj)
+
+        # 实况图: 图片与短视频成对, 视频走合并转发 (与抖音一致)
+        has_live_video = False
+        live_llocs: set[str] = set()
+        for lp in live_photos:
+            image_url = lp.get("image")
+            video_url = lp.get("video")
+            if not (image_url and video_url):
+                continue
+            if lloc := (lp.get("lloc") or ""):
+                live_llocs.add(lloc)
+            has_live_video = True
+
+            img_hash = self._get_qzone_hash(image_url)
+            v_hash = self._get_qzone_hash(video_url)
+
+            if is_repost_post:
+                if img_hash not in seen_hashes:
+                    seen_hashes.add(img_hash)
+                    repost_images.append(self.create_image(image_url))
+                if v_hash not in seen_videos:
+                    seen_videos.add(v_hash)
+                    repost_videos.append(self.create_video(video_url, cover_url=image_url))
+            else:
+                if img_hash not in seen_hashes:
+                    seen_hashes.add(img_hash)
+                    main_images.append(self.create_image(image_url))
+                if v_hash not in seen_videos:
+                    seen_videos.add(v_hash)
+                    videos.append(self.create_video(video_url, cover_url=image_url))
 
         # ========== 2. 解析 HTML 视频兜底 ==========
         for btn in feed.select('button[data-hook="global-video"], button.btn.video'):
@@ -497,6 +546,10 @@ class QQZoneParser(BaseParser):
             src = extract_raw_src(elem)
             if not src: return
             
+            # 实况图缩略图(wecam_pic)与 JSON 中的高清图是同一张, 跳过避免重复
+            if live_llocs and any(lloc in src for lloc in live_llocs):
+                return
+            
             src = self._fix_qzone_domain(src)
             img_hash = self._get_qzone_hash(src)
             
@@ -551,6 +604,7 @@ class QQZoneParser(BaseParser):
             "repost_videos": repost_videos,
             "repost_author": repost_author,
             "owner_avatar": owner_avatar,
+            "has_live_video": has_live_video,
         }
     
     async def _check_qzone_image_is_gif(self, url: str) -> bool:
@@ -638,6 +692,56 @@ class QQZoneParser(BaseParser):
                         continue
         
         return None
+
+    def _extract_qzone_cell_video_payload(self, text: str) -> str | None:
+        patterns = [
+            r'"cell_video"\s*:\s*\{',
+            r"'cell_video'\s*:\s*\{",
+            r'cell_video\s*:\s*\{',
+            r'"?cell_video"?\s*:\s*\{',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                start = text.find("{", match.end() - 1)
+                if start != -1:
+                    try:
+                        end = self._find_matching_brace(text, start)
+                        return text[start:end]
+                    except ParseException:
+                        continue
+
+        return None
+
+    def _extract_qzone_cell_video_media(self, text: str) -> dict[str, list] | None:
+        """解析 cell_video 数据 (视频动态): 提取视频地址和封面"""
+        payload = self._extract_qzone_cell_video_payload(text)
+        if not payload:
+            return None
+
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        video_url = data.get("videourl")
+        if not isinstance(video_url, str) or not video_url:
+            return None
+
+        video_url = self._normalize_qzone_image_url(html.unescape(video_url).strip())
+
+        cover_url = None
+        cover = data.get("coverurl")
+        if isinstance(cover, dict):
+            cover_url = self._qzone_first_media_url(cover)
+        if cover_url:
+            cover_url = self._normalize_qzone_image_url(html.unescape(cover_url).strip())
+
+        return {"images": [], "videos": [video_url], "covers": [cover_url] if cover_url else []}
 
     def _extract_qzone_js_media_urls(self, text: str, object_name: str, url_keys: tuple[str, ...]) -> list[str]:
         urls: list[str] = []
@@ -748,13 +852,18 @@ class QQZoneParser(BaseParser):
         return {"images": images, "videos": videos, "covers": []}
 
     async def _extract_qzone_cell_pic_media(self, text: str) -> dict[str, list]:
+        # 优先解析 cell_video (视频动态)
+        if video_media := self._extract_qzone_cell_video_media(text):
+            return video_media
+
         payload = self._extract_qzone_cell_pic_payload(text)
         if not payload:
             return await self._extract_qzone_cell_pic_media_from_text(text)
 
         images: list[tuple[str, bool]] = []
         videos: list[str] = []
-        covers: list[str] = [] 
+        covers: list[str] = []
+        live_photos: list[dict[str, str]] = []
         gif_cache: dict[str, bool] = {}
         seen_hashes: set[str] = set() 
 
@@ -770,37 +879,21 @@ class QQZoneParser(BaseParser):
             videoflag = item.get("videoflag", 0)
             is_video = videoflag == 1 or bool(item.get("videodata")) or bool(item.get("videourl"))
 
-            if not is_video:
-                photourl = item.get("photourl")
-                image_url = None
-                if isinstance(photourl, dict):
-                    image_url = self._qzone_first_media_url(photourl)
+            # 提取图片地址
+            image_url = None
+            photourl = item.get("photourl")
+            if isinstance(photourl, dict):
+                image_url = self._qzone_first_media_url(photourl)
+            if not image_url:
+                for key in ("sloc", "lloc", "url", "picurl"):
+                    candidate = item.get(key)
+                    if isinstance(candidate, str) and candidate.startswith("http"):
+                        image_url = candidate
+                        break
 
-                if not image_url:
-                    for key in ("sloc", "lloc", "url", "picurl"):
-                        candidate = item.get(key)
-                        if isinstance(candidate, str) and candidate:
-                            image_url = candidate
-                            break
-
-                if image_url:
-                    image_url = self._fix_qzone_domain(image_url)
-                    img_hash = self._get_qzone_hash(image_url)
-                    if img_hash in seen_hashes:
-                        continue
-                    seen_hashes.add(img_hash)
-
-                    if image_url not in gif_cache:
-                        gif_cache[image_url] = await self._check_qzone_image_is_gif(image_url)
-                    is_gif = gif_cache[image_url]
-
-                    if not is_gif:
-                        image_url = self._upgrade_qzone_quality(image_url)
-
-                    images.append((image_url, is_gif))
-
+            # 提取视频地址
+            video_url = None
             if is_video:
-                video_url = None
                 videodata = item.get("videodata")
                 if isinstance(videodata, dict):
                     video_url = videodata.get("videourl")
@@ -818,7 +911,34 @@ class QQZoneParser(BaseParser):
                         video_url = videourl
                     elif isinstance(videourl, dict):
                         video_url = videourl.get("url") or videourl.get("videoUrl")
-                
+
+            if is_video and video_url and image_url:
+                # 实况图: 图片与短视频成对存在
+                live_photos.append({
+                    "image": self._normalize_qzone_image_url(image_url),
+                    "video": self._normalize_qzone_image_url(video_url),
+                    "lloc": str(item.get("lloc") or ""),
+                })
+                continue
+
+            if not is_video:
+                if image_url:
+                    image_url = self._fix_qzone_domain(image_url)
+                    img_hash = self._get_qzone_hash(image_url)
+                    if img_hash in seen_hashes:
+                        continue
+                    seen_hashes.add(img_hash)
+
+                    if image_url not in gif_cache:
+                        gif_cache[image_url] = await self._check_qzone_image_is_gif(image_url)
+                    is_gif = gif_cache[image_url]
+
+                    if not is_gif:
+                        image_url = self._upgrade_qzone_quality(image_url)
+
+                    images.append((image_url, is_gif))
+
+            if is_video:
                 if video_url and isinstance(video_url, str):
                     video_url = self._normalize_qzone_image_url(video_url)
                     v_hash = self._get_qzone_hash(video_url)
@@ -826,23 +946,13 @@ class QQZoneParser(BaseParser):
                         seen_hashes.add(v_hash)
                         videos.append(video_url)
 
-                photourl = item.get("photourl")
-                cover_url = None
-                if isinstance(photourl, dict):
-                    cover_url = self._qzone_first_media_url(photourl)
-                if not cover_url:
-                    for key in ("sloc", "lloc", "url", "picurl"):
-                        candidate = item.get(key)
-                        if isinstance(candidate, str) and candidate:
-                            cover_url = candidate
-                            break
-                if cover_url:
-                    covers.append(self._fix_qzone_domain(cover_url))
+                if image_url:
+                    covers.append(self._fix_qzone_domain(image_url))
 
-        if not images and not videos:
+        if not images and not videos and not live_photos:
             return await self._extract_qzone_cell_pic_media_from_text(text)
 
-        return {"images": images, "videos": videos, "covers": covers}
+        return {"images": images, "videos": videos, "covers": covers, "live_photos": live_photos}
 
 
     def _extract_qzone_text(self, node: Tag | NavigableString) -> str:
