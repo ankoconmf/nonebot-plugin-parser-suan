@@ -66,7 +66,9 @@ async def parser_handler(
 ):
     """统一的解析处理器"""
     # 1. 获取缓存结果
-    cache_key = sr.searched.group(0)
+    # 使用完整消息文本作为缓存键, 避免不同链接命中同一固定前缀
+    # (例如 QQ 空间卡片 pattern 只匹配到 h5.qzone.qq.com/ugc/share 常量前缀)
+    cache_key = sr.text
     result = _RESULT_CACHE.get(cache_key)
 
     if result is None:

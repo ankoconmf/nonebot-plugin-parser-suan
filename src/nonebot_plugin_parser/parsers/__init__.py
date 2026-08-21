@@ -14,6 +14,7 @@ from .pixiv import PixivParser as PixivParser
 from .booth import BoothParser as BoothParser
 from .heybox import HeyBoxParser as HeyBoxParser
 from .goodsmile import GoodSmileParser as GoodSmileParser
+from .qzone import QQZoneParser as QQZoneParser
 
 if yt_dlp_downloader is not None:
     from .tiktok import TikTokParser as TikTokParser

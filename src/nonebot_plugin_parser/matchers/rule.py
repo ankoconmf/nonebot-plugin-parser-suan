@@ -33,10 +33,15 @@ class MetaMusic(Struct):
     jumpUrl: str | None = None
 
 
+class MetaQzone(Struct):
+    jumpUrl: str | None = None
+
+
 class Meta(Struct):
     detail_1: MetaDetail | None = None
     news: MetaNews | None = None
     music: MetaMusic | None = None
+    qzone: MetaQzone | None = None
 
 
 class RawData(Struct):
@@ -97,6 +102,8 @@ def _extract_url(hyper: Hyper) -> str | None:
         url = meta.news.jumpUrl
     elif meta.music:
         url = meta.music.jumpUrl
+    elif meta.qzone:
+        url = meta.qzone.jumpUrl
 
     logger.debug(f"extract url[{url}] from raw#meta[{meta}]")
     return url
@@ -105,7 +112,13 @@ def _extract_url(hyper: Hyper) -> str | None:
 def _extract_text(message: UniMsg) -> str | None:
     """从消息中提取文本"""
     if hyper := next(iter(message.get(Hyper, 1)), None):
-        return _extract_url(hyper)
+        url = _extract_url(hyper)
+        if url:
+            return url
+        # 卡片中未提取到 URL 时, 回退到原始 JSON, 交由 parser 自行解析 (如 QQ 空间卡片)
+        if hyper.format == "json" and hyper.raw:
+            return hyper.raw
+        return None
     elif plain_text := message.extract_plain_text().strip():
         return plain_text
     return None
