@@ -39,6 +39,7 @@ class PlatformEnum(str, Enum):
     INSTAGRAM = "instagram"
     KUAISHOU = "kuaishou"
     NGA = "nga"
+    PDQQ = "pdqq"
     PIXIV = "pixiv"
     QZONE = "qzone"
     TIKTOK = "tiktok"

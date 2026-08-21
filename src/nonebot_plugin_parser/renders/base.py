@@ -84,7 +84,11 @@ class BaseRenderer(ABC):
 
         if mergeable_segs or other_segs:
             if pconfig.need_forward_contents or len(other_segs) > 1 or (len(mergeable_segs) + len(other_segs)) > 4:
-                forward_msg = UniHelper.construct_forward_message(mergeable_segs + other_segs)
+                forward_nodes = mergeable_segs + other_segs
+                # 简介文字进合并转发 (由 parser 通过 extra["text_in_forward"] 标记, 如腾讯频道)
+                if self.result.extra.get("text_in_forward") and self.result.text:
+                    forward_nodes = [self.result.text, *forward_nodes]
+                forward_msg = UniHelper.construct_forward_message(forward_nodes)
                 yield UniMessage(forward_msg)
             else:
                 if mergeable_segs:

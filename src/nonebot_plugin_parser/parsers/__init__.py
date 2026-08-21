@@ -15,6 +15,7 @@ from .booth import BoothParser as BoothParser
 from .heybox import HeyBoxParser as HeyBoxParser
 from .goodsmile import GoodSmileParser as GoodSmileParser
 from .qzone import QQZoneParser as QQZoneParser
+from .pdqq import PDQQParser as PDQQParser
 
 if yt_dlp_downloader is not None:
     from .tiktok import TikTokParser as TikTokParser
