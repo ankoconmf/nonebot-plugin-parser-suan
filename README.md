@@ -42,6 +42,7 @@
 | 小黑盒    | 链接(帖子/分享)                | ✅  | ✅  | ❌  |
 | 抖音直播  | 链接(直播间/回放)              | ❌  | ✅  | ❌  |
 | QQ空间    | 链接/JSON卡片/说说/分享        | ✅  | ✅  | ❌  |
+| 腾讯频道  | 链接/分享卡片                   | ✅  | ✅  | ❌  |
 
 支持的链接，可参考 [测试链接](https://github.com/fllesser/nonebot-plugin-parser/blob/master/tests/others/test_urls.md)
 
