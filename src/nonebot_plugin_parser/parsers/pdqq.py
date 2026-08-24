@@ -12,7 +12,8 @@
 支持的链接/卡片格式:
 - https://pd.qq.com/s/8s8shwqkd?b=2 (短链)
 - https://pd.qq.com/g/<guild_number>/post/<feed_id> (帖子直链)
-- [CQ:json,data={"app":"com.tencent.forum",...}] (QQ 频道分享卡片, 内嵌完整数据, 无需 HTTP)
+- [CQ:json,data={"app":"com.tencent.forum",...}] (QQ 频道帖子分享卡, 内嵌完整数据)
+- [CQ:json,data={"app":"com.tencent.feed.lua",...}] (QQ 频道 feed 分享卡, bizsrc=pindao.picforum)
 """
 
 from __future__ import annotations
@@ -108,6 +109,65 @@ class PDQQParser(BaseParser):
         """解析 /g/<guild>/post/<feed> 帖子直链"""
         url = f"https://pd.qq.com/g/{searched.group('guild')}/post/{searched.group('feed')}"
         return await self.parse_url(url)
+
+    @handle("com.tencent.feed.lua", r'"app"\s*:\s*"com\.tencent\.feed\.lua"')
+    async def _parse_feed_lua_card(self, searched: re.Match[str]):
+        """解析 QQ 频道 feed 分享卡 (app=com.tencent.feed.lua, bizsrc=pindao.picforum).
+
+        与 com.tencent.forum 卡片不同, 本卡片数据在 meta.feed, 字段为
+        title(正文)/cover(首图)/feed_id/guild_id, 优先走 HTTP 补全拿完整数据.
+        """
+        payload = self._extract_card_payload(searched.string)
+        feed = payload.get("meta", {}).get("feed") if isinstance(payload, dict) else None
+        if not isinstance(feed, dict):
+            raise ParseException("频道分享卡结构异常 (缺少 meta.feed)")
+
+        # 提取 feed_id: 优先 busiData 内的 share_biz_data.feed_id, 其次 ark_reserved3
+        feed_id = None
+        busi = None
+        if isinstance(feed.get("busiData"), str):
+            with contextlib.suppress(json.JSONDecodeError):
+                busi = json.loads(feed["busiData"])
+                feed_id = (busi.get("share_biz_data") or {}).get("feed_id")
+        if not feed_id:
+            feed_id = feed.get("ark_reserved3")
+        # guild_id: ark_reserved1 或 busiData
+        guild_id = feed.get("ark_reserved1")
+
+        jump_url = feed.get("jumpUrl")
+
+        # 优先: 走 HTTP 拿完整数据 (jumpUrl 或 guild_id+feed_id 拼直链)
+        for post_url in (jump_url, f"https://pd.qq.com/g/{guild_id}/post/{feed_id}" if feed_id and guild_id else None):
+            if not post_url:
+                continue
+            try:
+                return await self.parse_url(post_url)
+            except ParseException as e:
+                logger.warning(f"频道分享卡走 HTTP 补全失败, 换下一途径: {e}")
+
+        # 回退: 用卡片自带数据 (title 作正文, cover 作图片)
+        text = str(feed.get("title") or "").strip() or None
+        cover = feed.get("cover")
+        contents: list[MediaContent] = []
+        if cover:
+            contents.append(self.create_image(cover))
+
+        if not text and not contents:
+            raise ParseException("频道分享卡无内容可解析")
+
+        content_type = "图文" if contents else "动态"
+        extra: dict[str, Any] = {"content_type": content_type}
+        if text and contents:
+            extra["text_in_forward"] = True
+
+        return self.result(
+            url=jump_url or feed_id,
+            title=None,
+            text=text,
+            timestamp=None,
+            contents=contents,
+            extra=extra,
+        )
 
     @handle("com.tencent.forum", r'"app"\s*:\s*"com\.tencent\.forum"')
     async def _parse_json_card(self, searched: re.Match[str]):
