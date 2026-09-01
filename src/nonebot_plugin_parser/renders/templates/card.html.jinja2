@@ -25,6 +25,7 @@
               --card: #ffffff;
               --card-glass: rgba(255, 255, 255, 0.91);
               --panel: #f5f6f9;
+              --glass: rgba(255, 255, 255, 0.50);
               --hair: rgba(0, 0, 0, 0.06);
               --intro-stroke: rgba(0, 0, 0, 0.09);
               --image-stroke: rgba(255, 255, 255, 0.96);
@@ -77,6 +78,7 @@
               --card: #212121;
               --card-glass: rgba(33, 33, 33, 0.92);
               --panel: #272727;
+              --glass: rgba(33, 33, 33, 0.55);
               --hair: rgba(255, 255, 255, 0.10);
               --intro-stroke: rgba(255, 255, 255, 0.14);
               --image-stroke: rgba(255, 255, 255, 0.22);
@@ -291,7 +293,9 @@
               justify-content: space-between;
               gap: 6px;
               padding: 16px 8px;
-              background: var(--panel);
+              background: var(--glass);
+              backdrop-filter: blur(18px) saturate(1.4);
+              -webkit-backdrop-filter: blur(18px) saturate(1.4);
               border-radius: var(--radius-panel);
               box-shadow: inset 0 0 0 1px var(--hair);
             }
@@ -319,7 +323,9 @@
             .intro {
               position: relative;
               padding: 16px 18px 16px 20px;
-              background: var(--panel);
+              background: var(--glass);
+              backdrop-filter: blur(18px) saturate(1.4);
+              -webkit-backdrop-filter: blur(18px) saturate(1.4);
               border: 1px solid var(--intro-stroke);
               border-radius: var(--radius-sm);
               overflow: hidden;
