@@ -405,6 +405,29 @@
               font-weight: 700;
             }
 
+            /* ──────── 推特原比例并列 (3/4图) ──────── */
+            .twitter-aspect-row {
+              display: flex;
+              gap: 8px;
+              width: 100%;
+            }
+            .twitter-aspect-item {
+              flex: 1;
+              min-width: 0;
+              overflow: hidden;
+              border-radius: var(--radius-sm);
+              border: 2px solid var(--image-stroke);
+              box-shadow:
+                0 0 0 1px var(--image-outline),
+                0 10px 24px -7px rgba(0, 0, 0, 0.30),
+                0 22px 38px -18px rgba(0, 0, 0, 0.36);
+            }
+            .twitter-aspect-item img {
+              width: 100%;
+              height: auto;
+              display: block;
+            }
+
             /* ──────── 图文 ──────── */
             .graphics-item {
               display: flex;
@@ -523,9 +546,33 @@
                 {% if video %}
                 {% elif imgs %}
                     {% set count = imgs|length %}
+                    {% set is_twitter_aspect_row = (result.platform.name == 'twitter') and (count in [3, 4]) %}
                     {% if count == 1 %}
                         {% set img = imgs[0] %}
                         <div class="image-container"><img src="{{ img.uri | safe }}" class="single-image" alt="image" /></div>
+                    {% elif is_twitter_aspect_row %}
+                        {# 推特3/4图: 默认显示正方形网格, JS检测为长图后切换到原比例并列 #}
+                        <div class="twitter-img-grid">
+                            {% set cols = 2 if count == 4 else 3 %}
+                            <div class="image-grid cols-{{ cols }}">
+                                {% for img in imgs %}
+                                    {% set img_uri = (img.uri if img.uri else fallback_pic) %}
+                                    <div class="grid-item">
+                                        <img src="{{ img_uri | safe }}" alt="image" />
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="twitter-img-aspect" style="display:none">
+                            <div class="twitter-aspect-row">
+                                {% for img in imgs %}
+                                    {% set img_uri = (img.uri if img.uri else fallback_pic) %}
+                                    <div class="twitter-aspect-item">
+                                        <img src="{{ img_uri | safe }}" alt="image" />
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </div>
                     {% else %}
                         {% set cols = 2 if count in [2, 4] else 3 %}
                         <div class="image-grid cols-{{ cols }}">
@@ -611,5 +658,32 @@
         {% endmacro %}
         {{ render_card(result) }}
         {% endautoescape %}
+        <script>
+        document.querySelectorAll('.twitter-img-aspect').forEach(function(aspectWrap) {
+            var gridWrap = aspectWrap.previousElementSibling;
+            var row = aspectWrap.querySelector('.twitter-aspect-row');
+            var imgs = Array.from(row.querySelectorAll('.twitter-aspect-item img'));
+            var items = Array.from(row.querySelectorAll('.twitter-aspect-item'));
+            var gap = 8;
+            Promise.all(imgs.map(function(img) {
+                return img.complete ? Promise.resolve() : new Promise(function(r) { img.onload = r; img.onerror = r; });
+            })).then(function() {
+                var allPortrait = imgs.every(function(img) { return img.naturalHeight > img.naturalWidth; });
+                if (!allPortrait) return;
+                gridWrap.style.display = 'none';
+                aspectWrap.style.display = '';
+                var availableWidth = row.clientWidth - gap * (imgs.length - 1);
+                var ratios = imgs.map(function(img) { return img.naturalWidth / img.naturalHeight; });
+                var commonHeight = availableWidth / ratios.reduce(function(a, b) { return a + b; }, 0);
+                imgs.forEach(function(img, i) {
+                    img.style.width = (ratios[i] * commonHeight) + 'px';
+                    img.style.height = commonHeight + 'px';
+                });
+                items.forEach(function(item) {
+                    item.style.flex = '0 0 auto';
+                });
+            });
+        });
+        </script>
     </body>
 </html>
