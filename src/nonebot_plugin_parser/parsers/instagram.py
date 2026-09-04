@@ -77,14 +77,21 @@ class InstagramParser(BaseParser):
         logger.debug(f"InstagramParser._parse called with: {url}")
 
         # 配置了 cookies: 优先登录态私有 API (公开帖也可用, 数据更全)
-        if pconfig.instagram_ck:
+        ck = pconfig.instagram_ck
+        if ck:
             try:
                 media = await self._fetch_via_private_api(_shortcode_to_pk(shortcode))
                 return self._build_result(media, url)
             except Exception as e:
                 logger.warning(f"failed to parse instagram {shortcode} via private api, fallback to graphql, error: {e}")
 
-        media = await self._fetch_via_graphql(shortcode)
+        try:
+            media = await self._fetch_via_graphql(shortcode)
+        except ParseException as e:
+            # 两条路都失败且配置了 cookies: 大概率是 cookies 过期或内容需要登录
+            if ck:
+                raise ParseException(f"{e}, cookies 可能已过期或该内容需要登录") from e
+            raise
         return self._build_result(media, url)
 
     # https://www.instagram.com/stories/{username}/{id}/ — 时效内容, 匿名接口拿不到
