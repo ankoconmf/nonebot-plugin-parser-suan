@@ -286,9 +286,8 @@ parser_pixiv_refresh_token=""
 # [本 fork] 是否屏蔽 pixiv R18 作品(不解析)
 parser_pixiv_skip_r18=True
 
-# [本 fork] Instagram 解析使用的 RapidAPI Key / Host
-parser_instagram_rapidapi_key=""
-parser_instagram_rapidapi_host="instagram-looter2.p.rapidapi.com"
+# [本 fork] Instagram cookies(sessionid=xxx; ..., 浏览器导出), 用于解析需要登录的内容(快拍等)
+parser_instagram_ck=""
 
 # [本 fork] Instagram 解析使用的代理
 parser_instagram_proxy=""

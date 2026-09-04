@@ -30,10 +30,8 @@ class Config(BaseModel):
     """是否屏蔽 R18 作品(不解析)"""
     parser_proxy: str | None = None
     """代理"""
-    parser_instagram_rapidapi_key: str | None = None
-    """Instagram RapidAPI Key（可在 NoneBot 插件配置中设置）"""
-    parser_instagram_rapidapi_host: str = "instagram-looter2.p.rapidapi.com"
-    """Instagram RapidAPI Host（默认 instagram-looter2.p.rapidapi.com）"""
+    parser_instagram_ck: str | None = None
+    """Instagram cookies(sessionid=xxx; ..., 浏览器导出), 用于解析需要登录的内容(快拍等)"""
     parser_instagram_proxy: str | None = None
     """Instagram 请求代理（可选，覆盖全局 proxy）"""
     parser_need_upload: bool = False
@@ -159,14 +157,9 @@ class Config(BaseModel):
         return self.parser_proxy
 
     @property
-    def instagram_rapidapi_key(self) -> str | None:
-        """Instagram RapidAPI Key"""
-        return self.parser_instagram_rapidapi_key
-
-    @property
-    def instagram_rapidapi_host(self) -> str:
-        """Instagram RapidAPI Host"""
-        return self.parser_instagram_rapidapi_host
+    def instagram_ck(self) -> str | None:
+        """Instagram cookies"""
+        return self.parser_instagram_ck
 
     @property
     def instagram_proxy(self) -> str | None:
