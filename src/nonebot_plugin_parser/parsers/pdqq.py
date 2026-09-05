@@ -15,6 +15,9 @@
 - [CQ:json,data={"app":"com.tencent.forum",...}] (QQ 频道帖子分享卡, 内嵌完整数据)
 - [CQ:json,data={"app":"com.tencent.feed.lua",...}] (QQ 频道图片论坛分享卡, bizsrc=pindao.picforum)
 - [CQ:json,data={"app":"com.tencent.plaintext.lua",...}] (QQ 频道纯文本论坛分享卡, bizsrc=pindao.textforum)
+
+feed.lua / plaintext.lua 卡片要求 bizsrc 以 pindao. 开头才认领: 群相册系统通知卡
+(bizsrc=group_album.*) 与频道卡共用 feed.lua 外壳, 靠 bizsrc 区分, 避免误触.
 """
 
 from __future__ import annotations
@@ -111,8 +114,17 @@ class PDQQParser(BaseParser):
         url = f"https://pd.qq.com/g/{searched.group('guild')}/post/{searched.group('feed')}"
         return await self.parse_url(url)
 
-    @handle("com.tencent.plaintext.lua", r'"app"\s*:\s*"com\.tencent\.plaintext\.lua"')
-    @handle("com.tencent.feed.lua", r'"app"\s*:\s*"com\.tencent\.feed\.lua"')
+    # 频道卡片与群相册通知卡共用 app=com.tencent.feed.lua 外壳, 需按 bizsrc 精确认领:
+    # 频道卡 bizsrc=pindao.*, 群相册卡 bizsrc=group_album.* (不得误触);
+    # ark 卡字段顺序固定 app -> bizsrc, 故用前瞻约束 bizsrc 在 app 之后出现
+    @handle(
+        "com.tencent.plaintext.lua",
+        r'(?s)"app"\s*:\s*"com\.tencent\.plaintext\.lua"(?=.*"bizsrc"\s*:\s*"pindao\.)',
+    )
+    @handle(
+        "com.tencent.feed.lua",
+        r'(?s)"app"\s*:\s*"com\.tencent\.feed\.lua"(?=.*"bizsrc"\s*:\s*"pindao\.)',
+    )
     async def _parse_feed_lua_card(self, searched: re.Match[str]):
         """解析 QQ 频道 feed 分享卡.
 
