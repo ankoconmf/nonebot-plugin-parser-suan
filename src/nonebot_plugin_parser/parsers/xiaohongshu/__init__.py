@@ -8,6 +8,11 @@ from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle, p
 
 
 _TOPIC_MARKER = re.compile(r"[ \t]*(?:【话题】|\[话题\])")
+_INITIAL_STATE_TOKEN = re.compile(
+    r'(?P<string>"(?:[^"\\]|\\.)*")'
+    r'|(?P<undefined>\bundefined\b)'
+    r'|\bnew\s+Map\s*\(\s*\[\s*\]\s*\)'
+)
 
 
 def _clean_description(text: str) -> str:
@@ -53,17 +58,30 @@ class XiaoHongShuParser(BaseParser):
     async def _parse_common(self, searched: re.Match[str]):
         xhs_domain = "https://www.xiaohongshu.com"
         query, xhs_id = searched.group("query", "xhs_id")
+        explore_url = f"{xhs_domain}/explore/{query}"
 
         try:
-            return await self.parse_explore(f"{xhs_domain}/explore/{query}", xhs_id)
+            return await self.parse_explore(explore_url, xhs_id)
         except Exception as e:
-            logger.warning(f"parse_explore failed, error: {e}, fallback to parse_discovery")
-            return await self.parse_discovery(f"{xhs_domain}/discovery/item/{query}")
+            if "cookie" in self.headers:
+                logger.warning(f"parse_explore with cookie failed, error: {e}, retry without cookie")
+                anonymous_headers = {key: value for key, value in self.headers.items() if key.lower() != "cookie"}
+                try:
+                    return await self.parse_explore(explore_url, xhs_id, headers=anonymous_headers)
+                except Exception as anonymous_error:
+                    logger.warning(
+                        f"parse_explore without cookie failed, error: {anonymous_error}, fallback to parse_discovery"
+                    )
+            else:
+                logger.warning(f"parse_explore failed, error: {e}, fallback to parse_discovery")
 
-    async def parse_explore(self, url: str, xhs_id: str):
+        return await self.parse_discovery(f"{xhs_domain}/discovery/item/{query}")
+
+    async def parse_explore(self, url: str, xhs_id: str, headers: dict[str, str] | None = None):
         from . import explore
 
-        async with AsyncClient(headers=self.headers, timeout=self.timeout) as client:
+        request_headers = self.headers if headers is None else headers
+        async with AsyncClient(headers=request_headers, timeout=self.timeout) as client:
             response = await client.get(url)
             # may be 302
             if response.status_code > 400:
@@ -81,6 +99,7 @@ class XiaoHongShuParser(BaseParser):
             raise ParseException(f"can't find note detail for xhs_id: {xhs_id}")
 
         note_detail = note_detail_wrapper.note
+        video_info = note_detail.video_cover_duration if note_detail.is_video else None
 
         author = self.create_author(note_detail.nickname, note_detail.avatar_url)
 
@@ -99,8 +118,8 @@ class XiaoHongShuParser(BaseParser):
         )
 
         # 添加视频内容
-        if note_detail.is_video:
-            result.video = self.create_video(*note_detail.video_cover_duration)
+        if video_info is not None:
+            result.video = self.create_video(*video_info)
 
         # 添加图片内容(实况图同时发视频, 走合并转发)
         elif note_detail.imageList:
@@ -133,6 +152,7 @@ class XiaoHongShuParser(BaseParser):
         init_state = discovery.decoder.decode(raw)
         note_data = init_state.noteData.data.noteData
         preload_data = init_state.noteData.normalNotePreloadData
+        video_info = note_data.url_and_duration if note_data.is_video else None
 
         author = self.create_author(note_data.user.nickName, note_data.user.avatar)
 
@@ -148,8 +168,8 @@ class XiaoHongShuParser(BaseParser):
             extra=extra,
         )
 
-        if note_data.is_video:
-            video_url, duration = note_data.url_and_duration
+        if video_info is not None:
+            video_url, duration = video_info
 
             if preload_data:
                 cover_url = preload_data.image_urls[0]
@@ -179,4 +199,10 @@ class XiaoHongShuParser(BaseParser):
         if not matched:
             raise ParseException("小红书分享链接失效或内容已删除")
 
-        return matched.group(1).replace("undefined", "null")
+        # 登录态页面包含空 Map；只转换字符串外的 JS 值，保留正文和 URL。
+        return _INITIAL_STATE_TOKEN.sub(
+            lambda token: token.group("string")
+            if token.group("string") is not None
+            else "null" if token.group("undefined") is not None else "{}",
+            matched.group(1),
+        )

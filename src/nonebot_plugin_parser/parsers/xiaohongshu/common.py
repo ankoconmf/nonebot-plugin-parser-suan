@@ -1,4 +1,4 @@
-from msgspec import Struct
+from msgspec import Struct, field
 
 
 class StreamItem(Struct):
@@ -12,6 +12,9 @@ class Stream(Struct):
     h265: list[StreamItem] | None = None
     av1: list[StreamItem] | None = None
     h266: list[StreamItem] | None = None
+    # 登录态网页使用的新字段名，与 h264 / h265 指向相同的编码流。
+    ef4: list[StreamItem] | None = field(default=None, name="EF4")
+    ef5: list[StreamItem] | None = field(default=None, name="EF5")
 
 
 class Media(Struct):
@@ -26,13 +29,9 @@ class Video(Struct):
         stream = self.media.stream
 
         # h264 有水印，h265 无水印
-        if stream.h265:
-            return stream.h265[0].masterUrl, stream.h265[0].duration / 1000
-        elif stream.h264:
-            return stream.h264[0].masterUrl, stream.h264[0].duration / 1000
-        elif stream.av1:
-            return stream.av1[0].masterUrl, stream.av1[0].duration / 1000
-        elif stream.h266:
-            return stream.h266[0].masterUrl, stream.h266[0].duration / 1000
+        for items in (stream.h265, stream.ef5, stream.h264, stream.ef4, stream.av1, stream.h266):
+            for item in items or ():
+                if item.masterUrl:
+                    return item.masterUrl, item.duration / 1000
 
         return None, 0.0

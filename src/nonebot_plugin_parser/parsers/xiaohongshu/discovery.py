@@ -11,6 +11,8 @@ class StreamItem(Struct):
 class Stream(Struct):
     h264: list[StreamItem] = field(default_factory=list)
     h265: list[StreamItem] = field(default_factory=list)
+    ef4: list[StreamItem] = field(default_factory=list, name="EF4")
+    ef5: list[StreamItem] = field(default_factory=list, name="EF5")
 
 
 class Image(Struct):
@@ -24,9 +26,10 @@ class Image(Struct):
         """实况图视频地址"""
         if not self.livePhoto or self.stream is None:
             return None
-        for items in (self.stream.h264, self.stream.h265):
-            if items and items[0].masterUrl:
-                return items[0].masterUrl
+        for items in (self.stream.h264, self.stream.ef4, self.stream.h265, self.stream.ef5):
+            for item in items:
+                if item.masterUrl:
+                    return item.masterUrl
         return None
 
 
@@ -70,9 +73,11 @@ class NoteData(Struct):
 
     @property
     def url_and_duration(self):
-        assert self.video is not None
+        if self.video is None:
+            raise ValueError("小红书笔记缺少视频数据")
         video_url, duration = self.video.url_and_duration
-        assert video_url is not None
+        if not video_url:
+            raise ValueError("小红书视频没有可用的播放地址")
         return video_url, duration
 
 
