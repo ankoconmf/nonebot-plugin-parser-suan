@@ -184,10 +184,11 @@ class XiaoHongShuParser(BaseParser):
         elif note_data.imageList:
             has_live = False
             for image in note_data.imageList:
+                image_url = image.download_url
                 if live_url := image.live_video_url:
-                    result.contents.append(self.create_video(live_url, image.url))
+                    result.contents.append(self.create_video(live_url, image_url))
                     has_live = True
-                result.contents.append(self.create_image(image.url))
+                result.contents.append(self.create_image(image_url))
             if has_live:
                 result.extra["merge_videos"] = True
 

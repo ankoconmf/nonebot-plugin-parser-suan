@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 from msgspec import Struct, field
 from msgspec.json import Decoder
 
@@ -18,8 +20,19 @@ class Stream(Struct):
 class Image(Struct):
     url: str
     urlSizeLarge: str | None = None
+    fileId: str | None = None
     livePhoto: bool = False
     stream: Stream | None = None
+
+    @property
+    def download_url(self) -> str:
+        """H5 详情图带水印，使用预加载原图或 fileId 对应的原图源。"""
+        if self.urlSizeLarge:
+            return self.urlSizeLarge
+        if self.fileId:
+            image_key = quote(self.fileId.lstrip("/"), safe="/")
+            return f"https://sns-na-i4.xhscdn.com/{image_key}?imageView2/2/w/1080/format/webp"
+        return self.url
 
     @property
     def live_video_url(self) -> str | None:
@@ -47,7 +60,7 @@ class NoteData(Struct):
     """最后更新时间戳, 毫秒"""
     time: int | None = None
     """发布时间戳, 毫秒"""
-    imageList: list[Image] = []  # 有水印
+    imageList: list[Image] = []  # url 带水印，下载时使用 download_url
     video: Video | None = None
     ipLocation: str | None = None
     """发布地区 (IP 属地)"""
@@ -65,7 +78,7 @@ class NoteData(Struct):
 
     @property
     def image_urls(self) -> list[str]:
-        return [item.url for item in self.imageList]
+        return [item.download_url for item in self.imageList]
 
     @property
     def is_video(self) -> bool:
@@ -88,7 +101,7 @@ class NormalNotePreloadData(Struct):
 
     @property
     def image_urls(self) -> list[str]:
-        return [item.urlSizeLarge or item.url for item in self.imagesList]
+        return [item.download_url for item in self.imagesList]
 
 
 class NoteDataWrapper(Struct):
