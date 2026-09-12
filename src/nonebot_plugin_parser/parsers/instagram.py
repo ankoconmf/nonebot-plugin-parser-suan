@@ -1,6 +1,9 @@
 import json
 import re
+import asyncio
+from html import unescape
 from typing import Any, ClassVar
+from xml.etree import ElementTree
 
 from httpx import AsyncClient
 from nonebot import logger
@@ -9,6 +12,8 @@ from ..config import pconfig
 from .base import BaseParser, PlatformEnum, handle
 from .data import Platform
 from .utils import fmt_stat
+from ..utils import generate_file_name
+from ..download import downloader
 from ..exception import ParseException
 
 _UA = (
@@ -69,7 +74,7 @@ class InstagramParser(BaseParser):
     # https://www.instagram.com/reel/DV5T344iDAn/
     @handle(
         "instagram.com",
-        r'(?:https?://)?(?:www\.)?instagram\.com/(?:p|reel|tv)/(?P<code>[A-Za-z0-9_-]+)',
+        r'(?:https?://)?(?:www\.)?instagram\.com/(?:[A-Za-z0-9_.-]+/)?(?:p|reel|tv)/(?P<code>[A-Za-z0-9_-]+)',
     )
     async def _parse(self, searched: re.Match[str]):
         url = searched.group(0)
@@ -121,6 +126,8 @@ class InstagramParser(BaseParser):
             "Accept-Language": "en-US,en;q=0.9",
             "x-ig-app-id": self.IG_APP_ID,
         }
+        if pconfig.instagram_ck:
+            headers["Cookie"] = pconfig.instagram_ck
         async with AsyncClient(headers=headers, proxy=proxy, timeout=self.timeout, verify=False) as client:
             csrf = await self._ensure_cookies(client)
             variables = json.dumps(
@@ -179,7 +186,51 @@ class InstagramParser(BaseParser):
         items = data.get("items") or []
         if not items:
             raise ParseException("private api 返回空, 可能为私密内容或 cookies 无权限")
-        return items[0]
+        media = items[0]
+        # 登录接口的高分辨率视频在 DASH 清单中，video_versions 通常只有 720p。
+        dash_videos, dash_audio = self._parse_dash_streams(media.get("video_dash_manifest"))
+        if dash_videos:
+            media = dict(media)
+            media["video_versions"] = [*media.get("video_versions", []), *dash_videos]
+            if dash_audio:
+                media["_dash_audio_url"] = dash_audio
+        return media
+
+    @staticmethod
+    def _parse_dash_streams(manifest: str | None) -> tuple[list[dict[str, Any]], str | None]:
+        """提取 Instagram DASH 清单中的视频轨和音频轨。"""
+        if not manifest:
+            return [], None
+        try:
+            root = ElementTree.fromstring(manifest)
+        except ElementTree.ParseError:
+            return [], None
+        videos = []
+        audio_url = None
+        for representation in root.iter():
+            if not representation.tag.endswith("Representation"):
+                continue
+            mime = representation.attrib.get("mimeType", "")
+            width = int(representation.attrib.get("width") or 0)
+            height = int(representation.attrib.get("height") or 0)
+            base_url = next((child.text for child in representation if child.tag.endswith("BaseURL") and child.text), None)
+            if mime.startswith("audio/"):
+                if base_url:
+                    audio_url = unescape(base_url)
+                continue
+            if not mime.startswith("video/") or not width or not height:
+                continue
+            if base_url:
+                videos.append(
+                    {
+                        "url": unescape(base_url),
+                        "width": width,
+                        "height": height,
+                        "bandwidth": int(representation.attrib.get("bandwidth") or 0),
+                        "filesize": int(representation.attrib.get("FBContentLength") or 0),
+                    }
+                )
+        return videos, audio_url
 
     async def _ensure_cookies(self, client: AsyncClient) -> str:
         """确保拿到匿名 cookies (csrftoken 等), 返回 csrftoken."""
@@ -211,9 +262,11 @@ class InstagramParser(BaseParser):
             # 图集: 子项可能混排视频与图片
             for child in children:
                 if videos := child.get("video_versions"):
+                    video = self._best_video(videos)
+                    video_source = self._video_source(video, child.get("_dash_audio_url"))
                     contents.append(
                         self.create_video(
-                            videos[0].get("url"),
+                            video_source,
                             self._image_url(child),
                             child.get("video_duration"),
                         )
@@ -221,9 +274,11 @@ class InstagramParser(BaseParser):
                 elif image := self._image_url(child):
                     contents.extend(self.create_images([image]))
         elif videos := media.get("video_versions"):
+            video = self._best_video(videos)
+            video_source = self._video_source(video, media.get("_dash_audio_url"))
             contents.append(
                 self.create_video(
-                    videos[0].get("url"),
+                    video_source,
                     self._image_url(media),
                     media.get("video_duration"),
                 )
@@ -253,6 +308,49 @@ class InstagramParser(BaseParser):
             url=url,
             extra={"stats": stats} if stats else {},
         )
+
+    def _video_source(self, video: dict[str, Any], audio_url: str | None):
+        if not audio_url:
+            return video["url"]
+        output_path = pconfig.cache_dir / generate_file_name(video["url"], ".mp4")
+        merged_path = output_path.with_name(f"{output_path.stem}.merged{output_path.suffix}")
+
+        async def merge():
+            if merged_path.exists():
+                return output_path
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            await downloader.download_av_and_merge(
+                video["url"],
+                audio_url,
+                output_path=merged_path,
+                ext_headers=self.headers,
+            )
+            if output_path.exists():
+                output_path.unlink()
+            merged_path.replace(output_path)
+            return output_path
+
+        return asyncio.create_task(merge())
+
+    @staticmethod
+    def _best_video(videos: list[dict[str, Any]]) -> dict[str, Any]:
+        """选择最高画质视频，超过 100 MB 时自动选择下一档。"""
+        candidates = [video for video in videos if video.get("url")]
+        if not candidates:
+            raise ParseException("未找到可用的视频链接")
+
+        def quality(video: dict[str, Any]) -> tuple[int, int, int]:
+            width = int(video.get("width") or 0)
+            height = int(video.get("height") or 0)
+            bitrate = int(video.get("bitrate") or video.get("bandwidth") or 0)
+            return width * height, bitrate, width + height
+
+        eligible = [
+            video for video in candidates
+            if not video.get("filesize")
+            or int(video["filesize"]) <= 100 * 1024 * 1024
+        ]
+        return max(eligible or candidates, key=quality)
 
     @staticmethod
     def _image_url(media: dict[str, Any]) -> str | None:
