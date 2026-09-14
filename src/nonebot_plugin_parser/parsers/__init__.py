@@ -4,7 +4,7 @@ from .base import BaseParser as BaseParser
 from .acfun import AcfunParser as AcfunParser
 from .weibo import WeiBoParser as WeiBoParser
 from .douyin import DouyinParser as DouyinParser
-from .twitter import TwitterParser as TwitterParser
+from .x import TwitterParser as TwitterParser
 from .bilibili import BilibiliParser as BilibiliParser
 from .kuaishou import KuaiShouParser as KuaiShouParser
 from ..download import yt_dlp_downloader as yt_dlp_downloader
