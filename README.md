@@ -457,4 +457,4 @@ real_url = await self.get_redirect_url(
 
 - [nonebot-plugin-resolver](https://github.com/zhiyu1998/nonebot-plugin-resolver) - 本项目最初基于此插件进行开发，在此表示感谢。尽管当前版本代码已完全重构，但仍感谢原项目提供的初始思路和参考。 
 - [parse-video-py](https://github.com/wujunwei928/parse-video-py) - 在抖音解析功能实现方面提供了技术参考和借鉴。
-- [nonebot-plugin-parser-lite](https://github.com/sokoko-org/nonebot-plugin-parser-lite) - X (Twitter) 解析的接口来源与实现参考。
+- [nonebot-plugin-parser-lite](https://github.com/sokoko-org/nonebot-plugin-parser-lite) - 一些解析的接口来源与实现参考。
