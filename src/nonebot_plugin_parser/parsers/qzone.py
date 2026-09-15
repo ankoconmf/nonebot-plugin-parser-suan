@@ -13,7 +13,7 @@
 2. URL 归一: 各种短链/schema 统一拼成 h5.qzone.qq.com/ugc/share 分享链
 3. H5 页面抓取: feed-bd 结构提取作者/正文/转发, 内嵌 JSON (cell_pic/cell_video) 提取媒体,
    全文正则与 HTML 标签兜底
-4. 媒体处理: URL 指纹去重 / GIF 探测 / 画质升级 / 实况图图片视频成对 (merge_videos)
+4. 媒体处理: URL 指纹去重 / GIF 探测 / 画质升级 / 实况图图片视频成对 (merge_videos + live_photos)
 """
 
 import asyncio
@@ -856,6 +856,7 @@ class QQZoneParser(BaseParser):
         # 实况图: 视频与图片成对, 视频走合并转发 (与抖音一致)
         if content.get("has_live_video"):
             result.extra["merge_videos"] = True
+            result.extra["live_photos"] = True
 
         if repost_text or repost_images or repost_videos:
             repost_author = content.get("repost_author")

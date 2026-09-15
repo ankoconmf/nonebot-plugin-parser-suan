@@ -408,7 +408,7 @@
             /* ──────── 推特原比例并列 (3/4图) ──────── */
             .twitter-aspect-row {
               display: flex;
-              gap: 3px;
+              gap: 4px;
               width: 100%;
             }
             .twitter-aspect-item {
@@ -546,14 +546,14 @@
                 {% if video %}
                 {% elif imgs %}
                     {% set count = imgs|length %}
-                    {% set is_twitter_aspect_row = (result.platform.name == 'twitter') and (count in [3, 4]) %}
+                    {% set is_twitter_aspect_row = (result.platform.name == 'twitter') and (count in [2, 3, 4]) %}
                     {% if count == 1 %}
                         {% set img = imgs[0] %}
                         <div class="image-container"><img src="{{ img.uri | safe }}" class="single-image" alt="image" /></div>
                     {% elif is_twitter_aspect_row %}
-                        {# 推特3/4图: 默认显示正方形网格, JS检测为长图后切换到原比例并列 #}
+                        {# 推特2/3/4图: 默认显示正方形网格, JS检测为长图后切换到原比例并列 #}
                         <div class="twitter-img-grid">
-                            {% set cols = 2 if count == 4 else 3 %}
+                            {% set cols = 2 if count in [2, 4] else 3 %}
                             <div class="image-grid cols-{{ cols }}">
                                 {% for img in imgs %}
                                     {% set img_uri = (img.uri if img.uri else fallback_pic) %}

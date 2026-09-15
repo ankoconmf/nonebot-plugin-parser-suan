@@ -178,7 +178,8 @@ class ParseResult:
     def all_grid_images(self):
         """获取所有用于渲染图片网格的图片（视频封面 + 图片）"""
         # 实况图场景: 视频和图片成对存在, 网格只取图片, 避免封面与图片重复
-        skip_video_cover = bool(self.extra.get("merge_videos")) and any(
+        # (图片视频混排的图集如 Instagram 不标记 live_photos, 视频封面仍需出现在网格里)
+        skip_video_cover = bool(self.extra.get("live_photos")) and any(
             isinstance(cont, ImageContent) for cont in self.contents
         )
         covers: list[PathTask] = []

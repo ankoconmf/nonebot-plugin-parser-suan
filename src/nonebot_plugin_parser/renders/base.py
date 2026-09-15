@@ -58,7 +58,7 @@ class BaseRenderer(ABC):
                     else:
                         thumbnail = await video.cover.safe_get() if video.cover else None
                         video_seg = UniHelper.video_seg(path, thumbnail)
-                        # 需要合并转发的视频(如抖音实况图)放入 other_segs, 由下方合并逻辑统一处理
+                        # 需要合并转发的视频(如抖音实况图/Instagram 图文视频混排)放入 other_segs, 由下方合并逻辑统一处理
                         if self.result.extra.get("merge_videos"):
                             other_segs.append(video_seg)
                         else:
@@ -83,7 +83,14 @@ class BaseRenderer(ABC):
                 mergeable_segs.append(img_seg)
 
         if mergeable_segs or other_segs:
-            if pconfig.need_forward_contents or len(other_segs) > 1 or (len(mergeable_segs) + len(other_segs)) > 4:
+            # 图片与视频混排 (如 Instagram 图集): 视频已进 other_segs, 与图片一并合并转发
+            mixed_media = bool(self.result.extra.get("merge_videos")) and bool(mergeable_segs) and bool(other_segs)
+            if (
+                pconfig.need_forward_contents
+                or mixed_media
+                or len(other_segs) > 1
+                or (len(mergeable_segs) + len(other_segs)) > 4
+            ):
                 forward_nodes = mergeable_segs + other_segs
                 # 简介文字进合并转发 (由 parser 通过 extra["text_in_forward"] 标记, 如腾讯频道)
                 if self.result.extra.get("text_in_forward") and self.result.text:

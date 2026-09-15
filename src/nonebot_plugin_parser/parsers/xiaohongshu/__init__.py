@@ -130,7 +130,9 @@ class XiaoHongShuParser(BaseParser):
                     has_live = True
                 result.contents.append(self.create_image(image.urlDefault))
             if has_live:
+                # 视频进合并转发, 且网格图跳过与图片重复的视频封面
                 result.extra["merge_videos"] = True
+                result.extra["live_photos"] = True
 
         return result
 
@@ -190,7 +192,9 @@ class XiaoHongShuParser(BaseParser):
                     has_live = True
                 result.contents.append(self.create_image(image_url))
             if has_live:
+                # 视频进合并转发, 且网格图跳过与图片重复的视频封面
                 result.extra["merge_videos"] = True
+                result.extra["live_photos"] = True
 
         return result
 

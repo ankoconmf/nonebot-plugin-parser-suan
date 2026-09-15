@@ -225,7 +225,9 @@ class DouyinParser(BaseParser):
                 elif image_url := image.image_url:
                     result.contents.append(self.create_image(image_url))
             if has_live_video:
+                # 视频进合并转发, 且网格图跳过与图片重复的视频封面
                 result.extra["merge_videos"] = True
+                result.extra["live_photos"] = True
             # 背景音乐转为语音消息
             if (music := video_data.music) and (audio_url := music.audio_url):
                 result.contents.append(self.create_audio(audio_url, music.duration))

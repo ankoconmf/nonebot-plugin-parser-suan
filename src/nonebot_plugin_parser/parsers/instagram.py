@@ -10,7 +10,7 @@ from nonebot import logger
 
 from ..config import pconfig
 from .base import BaseParser, PlatformEnum, handle
-from .data import Platform
+from .data import ImageContent, Platform, VideoContent
 from .utils import fmt_stat
 from ..utils import generate_file_name
 from ..download import downloader
@@ -299,6 +299,13 @@ class InstagramParser(BaseParser):
                 stats.append({"icon": icon, "value": fmt_stat(value), "label": label})
 
         caption = (media.get("caption") or {}).get("text") or None
+        extra: dict[str, Any] = {"stats": stats} if stats else {}
+        # 图集内图片与视频混排: 标记视频一并进合并转发, 图片视频放在同一条转发里
+        if any(isinstance(cont, VideoContent) for cont in contents) and any(
+            isinstance(cont, ImageContent) for cont in contents
+        ):
+            extra["merge_videos"] = True
+
         return self.result(
             title=None,
             text=caption,
@@ -306,7 +313,7 @@ class InstagramParser(BaseParser):
             contents=contents,
             timestamp=media.get("taken_at"),
             url=url,
-            extra={"stats": stats} if stats else {},
+            extra=extra,
         )
 
     def _video_source(self, video: dict[str, Any], audio_url: str | None):
