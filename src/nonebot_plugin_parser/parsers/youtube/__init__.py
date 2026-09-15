@@ -1,6 +1,7 @@
 import json
 import re
 from typing import Any, ClassVar
+from datetime import datetime
 
 from httpx import AsyncClient
 from nonebot import logger
@@ -117,22 +118,30 @@ class YouTubeParser(BaseParser):
         author = await self._fetch_author_info(video_info.channel_id)
 
         stats = []
-        if video_info.is_live and video_info.concurrent_view_count is not None:
-            stats.append(
-                {
-                    "icon": "eye",
-                    "value": fmt_stat(video_info.concurrent_view_count),
-                    "label": "正在观看",
-                }
-            )
-        view_label = "累计观看" if video_info.is_live else "观看"
-        for icon, value, label in (
-            ("eye", video_info.view_count, view_label),
-            ("like", video_info.like_count, "点赞"),
-            ("comment", video_info.comment_count, "评论"),
-        ):
-            if value is not None:
-                stats.append({"icon": icon, "value": fmt_stat(value), "label": label})
+        if video_info.is_upcoming:
+            # 预约/待开播: 还没有观看数, 改为显示预约开播时间
+            if video_info.release_timestamp is not None:
+                start_time = datetime.fromtimestamp(video_info.release_timestamp).strftime("%Y-%m-%d %H:%M")
+                stats.append({"icon": "clock", "value": start_time, "label": "预约开播"})
+            if video_info.like_count is not None:
+                stats.append({"icon": "like", "value": fmt_stat(video_info.like_count), "label": "点赞"})
+        else:
+            if video_info.is_live and video_info.concurrent_view_count is not None:
+                stats.append(
+                    {
+                        "icon": "eye",
+                        "value": fmt_stat(video_info.concurrent_view_count),
+                        "label": "正在观看",
+                    }
+                )
+            view_label = "累计观看" if video_info.is_live else "观看"
+            for icon, value, label in (
+                ("eye", video_info.view_count, view_label),
+                ("like", video_info.like_count, "点赞"),
+                ("comment", video_info.comment_count, "评论"),
+            ):
+                if value is not None:
+                    stats.append({"icon": icon, "value": fmt_stat(value), "label": label})
 
         extra: dict[str, Any] = {"stats": stats} if stats else {}
         if video_info.is_live:

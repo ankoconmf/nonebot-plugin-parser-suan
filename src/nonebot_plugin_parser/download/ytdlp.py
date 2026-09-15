@@ -42,11 +42,18 @@ class VideoInfo(Struct):
     """分享/转发数"""
     live_status: str | None = None
     """直播状态 (is_live/is_upcoming/was_live/not_live)"""
+    release_timestamp: int | None = None
+    """预约开播时间戳"""
 
     @property
     def is_live(self) -> bool:
         """是否为正在直播或预约中的直播"""
         return self.live_status in ("is_live", "is_upcoming")
+
+    @property
+    def is_upcoming(self) -> bool:
+        """是否为预约中(未开播)的直播"""
+        return self.live_status == "is_upcoming"
 
     @property
     def author_name(self) -> str:
@@ -83,13 +90,31 @@ class YtdlpDownloader:
             return video_info
         ydl_opts = self._extract_base_opts.copy()
 
-        if cookiefile:
+        if cookiefile and cookiefile.exists():
             ydl_opts["cookiefile"] = str(cookiefile)
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = await asyncio.to_thread(ydl.extract_info, url, download=False)
-            if not info_dict:
-                raise ParseException("获取视频信息失败")
+        def _extract(opts: dict) -> dict | None:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=False)
+
+        try:
+            info_dict = await asyncio.to_thread(_extract, ydl_opts)
+        except Exception as error:
+            # 预约/待开播的直播还没有任何可下载格式, yt-dlp 会直接报错,
+            # 这里放开 no formats 限制再取一次元数据, 但只接受"预约中"的结果,
+            # 避免把登录失效, 地区限制等错误也一起吞掉
+            try:
+                info_dict = await asyncio.to_thread(
+                    _extract,
+                    {**ydl_opts, "ignore_no_formats_error": True},
+                )
+            except Exception:
+                raise error from None
+            if not isinstance(info_dict, dict) or info_dict.get("live_status") != "is_upcoming":
+                raise error from None
+
+        if not info_dict:
+            raise ParseException("获取视频信息失败")
 
         video_info = convert(info_dict, VideoInfo)
         self._video_info_mapping[url] = video_info
@@ -124,7 +149,7 @@ class YtdlpDownloader:
             ydl_opts["format"] = f"bv[filesize<={duration // 10 + 10}M]+ba/b[filesize<={duration // 8 + 10}M]"
             ydl_opts["postprocessors"] = [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}]
 
-            if cookiefile:
+            if cookiefile and cookiefile.exists():
                 ydl_opts["cookiefile"] = str(cookiefile)
 
             try:
@@ -162,7 +187,7 @@ class YtdlpDownloader:
                 }
             ]
 
-            if cookiefile:
+            if cookiefile and cookiefile.exists():
                 ydl_opts["cookiefile"] = str(cookiefile)
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
