@@ -408,7 +408,7 @@
             /* ──────── 推特原比例并列 (3/4图) ──────── */
             .twitter-aspect-row {
               display: flex;
-              gap: 8px;
+              gap: 3px;
               width: 100%;
             }
             .twitter-aspect-item {
@@ -664,7 +664,7 @@
             var row = aspectWrap.querySelector('.twitter-aspect-row');
             var imgs = Array.from(row.querySelectorAll('.twitter-aspect-item img'));
             var items = Array.from(row.querySelectorAll('.twitter-aspect-item'));
-            var gap = 8;
+            var gap = parseFloat(getComputedStyle(row).columnGap) || 0;
             Promise.all(imgs.map(function(img) {
                 return img.complete ? Promise.resolve() : new Promise(function(r) { img.onload = r; img.onerror = r; });
             })).then(function() {
