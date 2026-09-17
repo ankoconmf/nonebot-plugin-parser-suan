@@ -1,102 +1,219 @@
 """X (Twitter) 解析
 
-主接口与 nonebot-plugin-parser-lite 的 x 解析保持一致:
-    POST https://easycomment.ai/api/twitter/v1/free/get-tweet-detail  {"pid": 推文id}
-返回的是 X 网页端的 threaded_conversation_with_injections_v2 结构,
-从中取出目标推文及其引用/转发关系, 映射为本地 ParseResult。
+主接口与 nonebot-plugin-parser-lite 的 x 解析保持一致: 直接请求 X 的 GraphQL
+    GET https://x.com/i/api/graphql/Xl0tsHf4AzflMRjbw9e70A/TweetResultByRestId
+鉴权用内置的 web Bearer, 未配置 cookie 时走游客 token (guest token) 激活流程。
+翻译(Grok)需要登录 cookie (parser_x_ck), 未配置时自动跳过。
 
-easycomment 背后转发的是 twitter241.p.rapidapi.com, 免费额度经常被限流 (429 -> 500),
-因此失败时自动回退到 api.fxtwitter.com (旧的 vxtwitter 目前已 403 不可用)。
+X 直连失败时回退到 api.fxtwitter.com (旧的 vxtwitter 目前已 403 不可用),
+回退源只保证正文/媒体/统计, 没有 Article 富文本、链接卡片与翻译。
 
 支持的形态: 普通推文 / 图片 / 视频 / 动图 / 长文本(note_tweet) / X Article /
 链接卡片 / 引用推文(带评论转发) / 直接转发 / 敏感内容(possibly_sensitive)。
 """
 
 from re import Match
-from collections.abc import Callable, Iterable
+from uuid import uuid4
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 from httpx import AsyncClient
 from msgspec import convert
-from msgspec.json import Decoder
+from msgspec.json import Decoder, encode
+
+from nonebot import logger
 
 from .model import FxResponse, FxTweet, Tweet, TweetEntry
 from .util import LinkCardData, parse_link_card
 from ..base import BaseParser, PlatformEnum, ParseException, handle
+from ..cookie import ck2dict
 from ..data import Platform, ParseResult
 from ..utils import fmt_stat
+from ...config import pconfig
 
-API_URL: str = "https://easycomment.ai/api/twitter/v1/free/get-tweet-detail"
-"""主接口"""
+TWEET_RESULT_API: str = (
+    "https://x.com/i/api/graphql/Xl0tsHf4AzflMRjbw9e70A/TweetResultByRestId"
+)
+"""主接口: 按推文 id 取推文详情 (GraphQL)"""
+
+GUEST_ACTIVATE_API: str = "https://api.x.com/1.1/guest/activate.json"
+"""游客 token 激活接口"""
+
+TRANSLATION_API: str = "https://api.x.com/2/grok/translation.json"
+"""翻译接口(Grok), 需要登录 cookie"""
+
+GUEST_TOKEN_MAX_USES: int = 40
+"""同一游客 token 复用次数上限, 超过后重新激活"""
+
+V2_BEARER: str = (
+    "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8x"
+    "nZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+)
+"""X web 端内置 Bearer"""
+
+FEATURES: bytes = encode(
+    {
+        "creator_subscriptions_tweet_preview_api_enabled": True,
+        "premium_content_api_read_enabled": False,
+        "communities_web_enable_tweet_community_results_fetch": True,
+        "c9s_tweet_anatomy_moderator_badge_enabled": True,
+        "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+        "responsive_web_grok_analyze_post_followups_enabled": True,
+        "rweb_cashtags_composer_attachment_enabled": True,
+        "responsive_web_jetfuel_frame": True,
+        "rweb_sports_post_context_enabled": True,
+        "responsive_web_grok_share_attachment_enabled": True,
+        "responsive_web_grok_annotations_enabled": True,
+        "articles_preview_enabled": True,
+        "responsive_web_edit_tweet_api_enabled": True,
+        "rweb_conversational_replies_downvote_enabled": False,
+        "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+        "view_counts_everywhere_api_enabled": True,
+        "longform_notetweets_consumption_enabled": True,
+        "responsive_web_twitter_article_tweet_consumption_enabled": True,
+        "content_disclosure_indicator_enabled": True,
+        "content_disclosure_ai_generated_indicator_enabled": True,
+        "responsive_web_grok_show_grok_translated_post": True,
+        "responsive_web_grok_analysis_button_from_backend": True,
+        "post_ctas_fetch_enabled": False,
+        "rweb_cashtags_enabled": True,
+        "freedom_of_speech_not_reach_fetch_enabled": True,
+        "standardized_nudges_misinfo": True,
+        "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+        "longform_notetweets_rich_text_read_enabled": True,
+        "longform_notetweets_inline_media_enabled": False,
+        "profile_label_improvements_pcf_label_in_post_enabled": True,
+        "responsive_web_profile_redirect_enabled": True,
+        "rweb_tipjar_consumption_enabled": False,
+        "verified_phone_label_enabled": False,
+        "responsive_web_nested_quote_preview_enabled": False,
+        "responsive_web_grok_image_annotation_enabled": True,
+        "responsive_web_grok_imagine_annotation_enabled": True,
+        "responsive_web_grok_community_note_auto_translation_is_enabled": True,
+        "responsive_web_graphql_timeline_navigation_enabled": True,
+    }
+)
+"""GraphQL features 参数"""
+
+FIELD_TOGGLES: bytes = encode(
+    {
+        "withArticleRichContentState": True,
+        "withArticlePlainText": False,
+        "withArticleSummaryText": True,
+        "withArticleVoiceOver": True,
+    }
+)
+"""GraphQL fieldToggles 参数"""
 
 FALLBACK_API_URL: str = "https://api.fxtwitter.com/Twitter/status/{tid}"
 """备用接口: 只需要推文 id, 直接拼在路径里"""
-
-SUCCESS_CODE: int = 100000
-"""主接口成功状态码"""
-
-TWEET_TYPES: frozenset[str] = frozenset({"Tweet", "TweetWithVisibilityResults"})
-"""正常的推文类型; 广告等其它类型直接跳过"""
 
 fx_decoder = Decoder(FxResponse)
 """备用接口响应解码器"""
 
 
-def _get_tweet_result(item: dict[str, Any]) -> dict[str, Any] | None:
-    """从 TimelineItem 中取出 tweet_results"""
-    item_content = item.get("itemContent")
-    if not isinstance(item_content, dict):
-        return None
-    if item_content.get("__typename") != "TimelineTweet":
-        return None
-
-    tweet_results = item_content.get("tweet_results") or {}
-    result = tweet_results.get("result") or {}
-    if result.get("__typename") not in TWEET_TYPES:
-        return None
-    return tweet_results
-
-
-def _iter_timeline_tweet_results(node: dict[str, Any]) -> Iterable[dict[str, Any]]:
-    """提取 TimelineItem 与 TimelineModule.items 中的 Tweet"""
-    if tweet_result := _get_tweet_result(node):
-        yield tweet_result
-        return
-
-    content = node.get("content")
-    if isinstance(content, dict):
-        yield from _iter_timeline_tweet_results(content)
-
-    for item in node.get("items", []):
-        if isinstance(item, dict):
-            yield from _iter_timeline_tweet_results(item)
-
-    item = node.get("item")
-    if isinstance(item, dict):
-        yield from _iter_timeline_tweet_results(item)
-
-
-def _get_legacy(result: dict[str, Any]) -> dict[str, Any]:
-    """取真实推文的 legacy, 兼容 TweetWithVisibilityResults 包装"""
-    if result.get("__typename") == "TweetWithVisibilityResults":
-        result = result.get("tweet") or {}
-    return result.get("legacy") or {}
-
-
-def _get_rest_id(result: dict[str, Any]) -> str | None:
-    """取真实推文 id, 兼容 TweetWithVisibilityResults 包装"""
-    if result.get("__typename") == "TweetWithVisibilityResults":
-        inner = result.get("tweet") or {}
-        return inner.get("rest_id") or (inner.get("legacy") or {}).get("id_str")
-    return result.get("rest_id") or (result.get("legacy") or {}).get("id_str")
-
-
 class TwitterParser(BaseParser):
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.TWITTER, display_name="X")
 
+    guest_token: str | None = None
+    """游客 token, 未配置 cookie 时使用"""
+    guest_token_uses: int = 0
+    """当前游客 token 已复用次数"""
+
     def __init__(self):
         super().__init__()
-        self.headers.update({"Content-Type": "application/json"})
+        self.headers.update({"Authorization": V2_BEARER})
+        self.cookies: dict[str, str] | None = None
+        if ck := pconfig.x_ck:
+            try:
+                self.cookies = ck2dict(ck)
+            except ValueError:
+                logger.warning("X cookies 格式异常, 已忽略")
+
+    @property
+    def _has_cookies(self) -> bool:
+        """是否配置了登录 cookie (翻译需要)"""
+        return bool(self.cookies and self.cookies.get("auth_token"))
+
+    # ------------------------------------------------------------------
+    # 鉴权: 优先 cookie, 否则走游客 token
+    # ------------------------------------------------------------------
+
+    async def _ensure_guest_token(self, client: AsyncClient) -> str:
+        """激活并缓存游客 token"""
+        response = await client.post(GUEST_ACTIVATE_API)
+        try:
+            response.raise_for_status()
+            self.guest_token = response.json()["guest_token"]
+        except Exception as e:
+            raise ParseException(f"获取游客 token 失败: {response.text[:120]}") from e
+        self.guest_token_uses = 0
+        return self.guest_token
+
+    async def _get_auth_headers(self, client: AsyncClient) -> dict[str, str]:
+        """构造 GraphQL 请求头 (游客 token 或登录 cookie)"""
+        csrf_token = str(uuid4()).replace("-", "")
+        headers = {
+            "x-twitter-active-user": "yes",
+            "x-twitter-client-language": "zh-cn",
+            "x-csrf-token": csrf_token,
+        }
+        if self.cookies:
+            headers["Cookie"] = (
+                f"auth_token={self.cookies.get('auth_token', '')}; ct0={csrf_token};"
+            )
+            headers["x-twitter-auth-type"] = "OAuth2Session"
+        else:
+            headers["x-guest-token"] = await self._guest_token(client)
+        return headers
+
+    async def _guest_token(self, client: AsyncClient) -> str:
+        """复用游客 token, 超过次数上限后重新激活"""
+        if self.guest_token is None:
+            return await self._ensure_guest_token(client)
+
+        self.guest_token_uses += 1
+        if self.guest_token_uses > GUEST_TOKEN_MAX_USES:
+            self.guest_token = None
+            self.guest_token_uses = 0
+            return await self._ensure_guest_token(client)
+        return self.guest_token
+
+    def _client(self) -> AsyncClient:
+        return AsyncClient(
+            headers=self.headers,
+            proxy=pconfig.proxy,
+            timeout=self.timeout,
+            verify=False,
+        )
+
+    # ------------------------------------------------------------------
+    # 翻译 (Grok): 需要登录 cookie
+    # ------------------------------------------------------------------
+
+    async def _get_translation(
+        self,
+        client: AsyncClient,
+        tweet_id: str,
+    ) -> str | None:
+        """获取推文的 AI 翻译, 失败静默返回 None"""
+        if not self._has_cookies:
+            return None
+        try:
+            response = await client.post(
+                TRANSLATION_API,
+                headers={**self.headers, **await self._get_auth_headers(client)},
+                json={"content_type": "POST", "id": tweet_id, "dst_lang": "zh"},
+            )
+            response.raise_for_status()
+            return (response.json().get("result") or {}).get("text") or None
+        except Exception:
+            logger.opt(exception=True).debug("获取 X 翻译失败")
+            return None
+
+    # ------------------------------------------------------------------
+    # 结果构建
+    # ------------------------------------------------------------------
 
     def _get_link_card(self, tweet: Tweet) -> LinkCardData | None:
         """推文链接卡片"""
@@ -136,9 +253,10 @@ class TwitterParser(BaseParser):
             stats.append({"icon": "star", "value": fmt_stat(bookmark_count), "label": "收藏"})
         return stats
 
-    def _collect_result(
+    async def _collect_result(
         self,
         raw: TweetEntry,
+        client: AsyncClient,
         is_repost: bool = False,
     ) -> ParseResult:
         tweet = raw.result.as_tweet
@@ -180,10 +298,10 @@ class TwitterParser(BaseParser):
         repost: ParseResult | None = None
         repost_status = tweet.quoted_status_result or tweet.retweeted_status_result
         if not is_repost and repost_status is not None:
-            repost = self._collect_result(repost_status, True)
+            repost = await self._collect_result(repost_status, client, True)
 
         extra: dict[str, Any] = {}
-        # 转发内容不显示统计面板
+        # 转发内容不显示统计面板 (翻译仍然提供)
         if not is_repost:
             extra["stats"] = self._stats_panel(
                 view_count=tweet.views.view_count if tweet.views else 0,
@@ -194,6 +312,9 @@ class TwitterParser(BaseParser):
                 bookmark_count=legacy.bookmark_count,
             )
             extra["source_id"] = f"@{user.core.screen_name}"
+
+        if translation := await self._get_translation(client, tweet.rest_id):
+            extra["translation"] = translation
 
         return self.result(
             author=author,
@@ -211,7 +332,12 @@ class TwitterParser(BaseParser):
     # 备用接口: api.fxtwitter.com
     # ------------------------------------------------------------------
 
-    def _collect_fallback(self, tweet: FxTweet, is_repost: bool = False) -> ParseResult:
+    async def _collect_fallback(
+        self,
+        tweet: FxTweet,
+        client: AsyncClient,
+        is_repost: bool = False,
+    ) -> ParseResult:
         author = self.create_author(
             name=tweet.author.name,
             avatar_url=tweet.author.avatar_url,
@@ -237,7 +363,7 @@ class TwitterParser(BaseParser):
 
         repost: ParseResult | None = None
         if not is_repost and tweet.quote is not None:
-            repost = self._collect_fallback(tweet.quote, True)
+            repost = await self._collect_fallback(tweet.quote, client, True)
 
         extra: dict[str, Any] = {}
         if not is_repost:
@@ -251,6 +377,10 @@ class TwitterParser(BaseParser):
             )
             extra["source_id"] = f"@{tweet.author.screen_name}"
 
+        # 回退源没有翻译数据, 仍然用 X 的翻译接口补齐
+        if translation := await self._get_translation(client, tweet.id):
+            extra["translation"] = translation
+
         return self.result(
             author=author,
             text=tweet.text,
@@ -263,17 +393,17 @@ class TwitterParser(BaseParser):
 
     async def _parse_by_fallback(self, tweet_id: str) -> ParseResult:
         """按推文 id 走备用接口解析"""
-        async with AsyncClient(headers=self.headers, timeout=self.timeout) as client:
+        async with self._client() as client:
             response = await client.get(FALLBACK_API_URL.format(tid=tweet_id))
 
-        if response.status_code >= 400:
-            # 接口用 404 表示推文不存在/不可见
-            raise ParseException(f"备用接口获取数据失败 {response.status_code}")
+            if response.status_code >= 400:
+                # 接口用 404 表示推文不存在/不可见
+                raise ParseException(f"备用接口获取数据失败 {response.status_code}")
 
-        data = fx_decoder.decode(response.content)
-        if data.code != 200 or data.tweet is None:
-            raise ParseException(f"解析失败: {data.message or data.code}")
-        return self._collect_fallback(data.tweet)
+            data = fx_decoder.decode(response.content)
+            if data.code != 200 or data.tweet is None:
+                raise ParseException(f"解析失败: {data.message or data.code}")
+            return await self._collect_fallback(data.tweet, client)
 
     @handle("twitter.com", r"twitter\.com/[0-9a-zA-Z_]{1,20}/status/(?P<tid>[0-9]+)")
     @handle("x.com", r"x\.com/[0-9a-zA-Z_]{1,20}/status/(?P<tid>[0-9]+)")
@@ -281,7 +411,7 @@ class TwitterParser(BaseParser):
         return await self.parse_tweet(searched.group("tid"))
 
     def _get_sources(self) -> list[Callable[[str], Any]]:
-        """解析源, 按顺序尝试; 主接口用的 RapidAPI 免费额度经常 429, 所以有备用源"""
+        """解析源, 按顺序尝试; X 直连失败时回退到 fxtwitter"""
         return [self._parse_by_primary, self._parse_by_fallback]
 
     async def parse_tweet(self, tweet_id: str) -> ParseResult:
@@ -297,89 +427,41 @@ class TwitterParser(BaseParser):
         raise ParseException(f"解析失败: {detail}")
 
     async def _parse_by_primary(self, tweet_id: str) -> ParseResult:
-        """走 easycomment 接口 (与 parser-lite 一致)"""
-        async with AsyncClient(headers=self.headers, timeout=self.timeout) as client:
-            response = await client.post(API_URL, json={"pid": tweet_id})
-
-        if response.status_code >= 400:
-            # 上游真实原因在响应体里 (例如 RapidAPI 额度用尽), 尽量透出来
-            raise ParseException(
-                f"主接口获取数据失败 {response.status_code}{self._upstream_reason(response)}"
+        """走 X 官方 GraphQL 接口 (与 parser-lite 一致)"""
+        async with self._client() as client:
+            response = await client.get(
+                TWEET_RESULT_API,
+                params={
+                    "variables": encode(
+                        {
+                            "tweetId": tweet_id,
+                            "includePromotedContent": True,
+                            "withBirdwatchNotes": True,
+                            "withVoice": True,
+                            "withCommunity": True,
+                            "withV2Timeline": True,
+                            "withQuickPromoteEligibilityTweetFields": True,
+                        }
+                    ).decode(),
+                    "features": FEATURES.decode(),
+                    "fieldToggles": FIELD_TOGGLES.decode(),
+                },
+                headers=await self._get_auth_headers(client),
             )
 
-        res = response.json()
-        if res.get("code") != SUCCESS_CODE:
-            raise ParseException(res.get("message") or res)
+            if response.status_code >= 400:
+                raise ParseException(
+                    f"主接口获取数据失败 {response.status_code}: {response.text[:200]}"
+                )
 
-        try:
-            instructions = res["data"]["data"][
-                "threaded_conversation_with_injections_v2"
-            ]["instructions"]
-        except (KeyError, TypeError) as e:
-            raise ParseException("返回数据结构异常") from e
+            tweet_result = (response.json().get("data") or {}).get("tweetResult") or {}
+            if not tweet_result:
+                raise ParseException("主接口未返回 tweetResult")
 
-        entries = next(
-            (
-                instruction["entries"]
-                for instruction in instructions
-                if instruction.get("type") == "TimelineAddEntries"
-            ),
-            None,
-        )
-        if entries is None:
-            raise ParseException("TimelineAddEntries not found")
+            try:
+                tweet = convert(tweet_result, TweetEntry)
+            except Exception as e:
+                logger.opt(exception=True).debug(f"解析 TweetResult 失败: {tweet_result}")
+                raise ParseException("解析推文结构失败") from e
 
-        return self._collect_entries(tweet_id, entries)
-
-    @staticmethod
-    def _upstream_reason(response: Any) -> str:
-        """从错误响应体里提取上游原因 (失败时返回空串)"""
-        try:
-            message = response.json().get("message")
-        except Exception:
-            return ""
-        if not message:
-            return ""
-        reason = " ".join(str(message).split())[:200]
-        return f" ({reason})"
-
-    def _collect_entries(
-        self,
-        tweet_id: str,
-        entries: list[dict[str, Any]],
-    ) -> ParseResult:
-        """从 entries 中取出目标推文并构建结果"""
-        # 所有推文的索引: rest_id -> tweet_results
-        tweet_map: dict[str, dict[str, Any]] = {}
-        # 当前链接对应的那条推文
-        root_entry: dict[str, Any] | None = None
-
-        for entry in entries:
-            for tweet_results in _iter_timeline_tweet_results(entry):
-                result = tweet_results.get("result") or {}
-                rest_id = _get_rest_id(result)
-                if not rest_id:
-                    continue
-
-                tweet_map[rest_id] = tweet_results
-                if rest_id == tweet_id:
-                    root_entry = tweet_results
-
-        if root_entry is None:
-            raise ParseException(f"未找到推文 {tweet_id}")
-
-        root_result = root_entry.get("result") or {}
-        legacy = _get_legacy(root_result)
-
-        # 链接指向的是回复时, 用被回复的推文补成 quoted_status_result, 交给 collect 统一处理
-        if "quoted_status_result" not in root_result:
-            in_reply_to_id = legacy.get("in_reply_to_status_id_str") or legacy.get(
-                "conversation_id_str"
-            )
-            if in_reply_to_id and in_reply_to_id != tweet_id:
-                parent_entry = tweet_map.get(in_reply_to_id)
-                if parent_entry is not None:
-                    root_result["quoted_status_result"] = parent_entry
-
-        tweet = convert(root_entry, TweetEntry)
-        return self._collect_result(tweet)
+            return await self._collect_result(tweet, client)

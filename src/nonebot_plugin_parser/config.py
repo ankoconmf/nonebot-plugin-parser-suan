@@ -34,6 +34,8 @@ class Config(BaseModel):
     """Instagram cookies(sessionid=xxx; ..., 浏览器导出), 用于解析需要登录的内容(快拍等)"""
     parser_instagram_proxy: str | None = None
     """Instagram 请求代理（可选，覆盖全局 proxy）"""
+    parser_x_ck: str | None = None
+    """X(Twitter) cookies(auth_token=xxx; ct0=xxx; ..., 浏览器导出), 用于 AI 翻译(Grok)等功能"""
     parser_need_upload: bool = False
     """是否需要上传音频文件"""
     parser_use_base64: bool = False
@@ -165,6 +167,11 @@ class Config(BaseModel):
     def instagram_proxy(self) -> str | None:
         """Instagram 请求代理（可选）"""
         return self.parser_instagram_proxy
+
+    @property
+    def x_ck(self) -> str | None:
+        """X(Twitter) cookies"""
+        return self.parser_x_ck
 
     @property
     def need_upload(self) -> bool:

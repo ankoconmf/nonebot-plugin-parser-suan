@@ -80,6 +80,7 @@
               --panel: #272727;
               --glass: rgba(33, 33, 33, 0.55);
               --hair: rgba(255, 255, 255, 0.10);
+              --glass-white: rgba(255, 255, 255, 0.07);
               --intro-stroke: rgba(255, 255, 255, 0.14);
               --image-stroke: rgba(255, 255, 255, 0.22);
               --grid-stroke: rgba(255, 255, 255, 0.14);
@@ -112,6 +113,7 @@
 
             /* ──────── 主卡片 ──────── */
             .card {
+              --glass-white: rgba(255, 255, 255, 0.55);
               position: relative;
               width: 100%;
               background:
@@ -345,6 +347,45 @@
               white-space: pre-wrap;
               word-wrap: break-word;
             }
+
+            /* ──────── AI 翻译: 简介框内的毛玻璃小圆框 (opt-in: result.extra['translation']) ──────── */
+            .translation {
+              margin-top: 10px;
+              padding: 7px 11px;
+              background: var(--glass-white);
+              backdrop-filter: blur(18px) saturate(1.4);
+              -webkit-backdrop-filter: blur(18px) saturate(1.4);
+              border: 1px solid var(--intro-stroke);
+              border-radius: 12px;
+              box-shadow:
+                inset 0 1px 0 var(--surface-highlight),
+                0 2px 8px -3px rgba(0, 0, 0, 0.12);
+              overflow: hidden;
+            }
+            .translation-text {
+              font-size: 15px;
+              color: var(--ink-soft);
+              line-height: 1.7;
+              white-space: pre-wrap;
+              word-wrap: break-word;
+            }
+            .translation-label {
+              float: right;
+              margin-left: 8px;
+              font-size: 10px;
+              color: var(--ink-faint);
+              opacity: 0.65;
+              line-height: 1.7;
+              white-space: nowrap;
+            }
+            /* 夜间: 玻璃底改为浅白低透明度 (文字颜色沿用 --ink-soft, 浅色/夜间一致) */
+            [data-theme="dark"] .translation {
+              background: rgba(255, 255, 255, 0.06);
+              box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.10),
+                0 2px 8px -3px rgba(0, 0, 0, 0.35);
+            }
+            [data-theme="dark"] .translation-label { opacity: 0.55; }
 
             /* ──────── 图片网格 ──────── */
             .image-container {
@@ -605,8 +646,16 @@
                 {# ── 标题 (头像上方); 图文已在正文上方渲染, 此处跳过避免重复 ── #}
                 {% if result.title and not result.graphics %}<div class="title">{{ result.title }}</div>{% endif %}
 
-                {# ── 转发正文 (内联, 主卡正文走下方悬浮 intro 块) ── #}
-                {% if is_repost and result.text %}<div class="text">{{ result.text }}</div>{% endif %}
+                {# ── 转发卡正文 (内联, 位于作者上方) + 翻译; 主卡走下方 intro 块 ── #}
+                {% if is_repost %}
+                    {% if result.text %}<div class="text">{{ result.text }}</div>{% endif %}
+                    {% if result.extra.get('translation') %}
+                        <div class="translation">
+                            <span class="translation-label">Grok 翻译</span>
+                            <div class="translation-text">{{ result.extra.get('translation') }}</div>
+                        </div>
+                    {% endif %}
+                {% endif %}
 
                 {# ── 作者行 ── #}
                 {% set author = result.author %}
@@ -637,10 +686,17 @@
                     </div>
                 {% endif %}
 
-                {# ── 简介 (正文): 转发者文字位于被转发内容上方 ── #}
-                {% if not is_repost and result.text %}
+                {# ── 简介 (正文): 仅主卡, 翻译作为简介框内的小圆框 ── #}
+                {% set translation = result.extra.get('translation') %}
+                {% if not is_repost and (result.text or translation) %}
                     <div class="intro">
-                        <div class="intro-text">{{ result.text }}</div>
+                        {% if result.text %}<div class="intro-text">{{ result.text }}</div>{% endif %}
+                        {% if translation %}
+                            <div class="translation">
+                                <span class="translation-label">Grok 翻译</span>
+                                <div class="translation-text">{{ translation }}</div>
+                            </div>
+                        {% endif %}
                     </div>
                 {% endif %}
 

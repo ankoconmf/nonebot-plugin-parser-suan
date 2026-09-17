@@ -1,6 +1,6 @@
 """X (Twitter) 数据结构
 
-对应 easycomment 接口返回的 TimelineTweet 结构。
+对应 X GraphQL `TweetResultByRestId` 返回的 TweetResult 结构。
 被转发的推文可能是 Tweet 或 TweetWithVisibilityResults 包装, 由 `TweetData` 统一兼容。
 
 与 nonebot-plugin-parser-lite 的 x/model.py 对齐, 差异点:
@@ -637,8 +637,7 @@ class TweetEntry(Struct):
 
 # ---------------------------------------------------------------------------
 # 备用接口 (api.fxtwitter.com) 的数据结构
-# 主接口 easycomment 背后是 RapidAPI 免费额度, 经常被 429 导致 500,
-# 失败时回退到 fxtwitter (旧的 vxtwitter 目前已经 403 不可用)。
+# X 直连 (GraphQL) 失败时回退到 fxtwitter; 旧的 vxtwitter 目前已经 403 不可用。
 # ---------------------------------------------------------------------------
 
 
