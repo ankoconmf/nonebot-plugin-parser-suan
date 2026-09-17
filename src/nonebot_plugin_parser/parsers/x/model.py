@@ -633,3 +633,88 @@ class TweetData(Struct):
 
 class TweetEntry(Struct):
     result: TweetData
+
+
+# ---------------------------------------------------------------------------
+# 备用接口 (api.fxtwitter.com) 的数据结构
+# 主接口 easycomment 背后是 RapidAPI 免费额度, 经常被 429 导致 500,
+# 失败时回退到 fxtwitter (旧的 vxtwitter 目前已经 403 不可用)。
+# ---------------------------------------------------------------------------
+
+
+class FxVideoVariant(Struct):
+    url: str
+    bitrate: int | None = None
+
+
+class FxVideoInfo(Struct):
+    duration: float = 0.0
+    """时长(秒)"""
+    variants: list[FxVideoVariant] = field(default_factory=list)
+
+
+class FxMedia(Struct):
+    type: str
+    """'photo' / 'video' / 'gif'"""
+    url: str
+    thumbnail_url: str | None = None
+    duration: float | None = None
+    """时长(秒), 部分响应有"""
+    video_info: FxVideoInfo | None = None
+
+    @property
+    def duration_seconds(self) -> float | None:
+        if self.video_info and self.video_info.duration:
+            return self.video_info.duration
+        return self.duration or None
+
+    @property
+    def best_video_url(self) -> str | None:
+        """最高码率的 mp4, 没有变体时退回 url"""
+        variants = [
+            variant
+            for variant in (self.video_info.variants if self.video_info else [])
+            if variant.url and "m3u8" not in variant.url
+        ]
+        if not variants:
+            return self.url or None
+        return max(variants, key=lambda variant: variant.bitrate or 0).url
+
+
+class FxMediaGroup(Struct):
+    all: list[FxMedia] = field(default_factory=list)
+
+
+class FxAuthor(Struct):
+    name: str = ""
+    screen_name: str = ""
+    avatar_url: str | None = None
+    description: str | None = None
+
+
+class FxTweet(Struct):
+    id: str = ""
+    url: str | None = None
+    text: str = ""
+    """已展开的长文本, 直接就是完整正文"""
+    author: FxAuthor = field(default_factory=FxAuthor)
+    created_timestamp: int | None = None
+    """创建时间(Unix 秒)"""
+    likes: int = 0
+    retweets: int = 0
+    replies: int = 0
+    quotes: int = 0
+    bookmarks: int = 0
+    views: int | None = None
+    media: FxMediaGroup | None = None
+    quote: "FxTweet | None" = None
+    """引用的推文"""
+    reposted_by: str | None = None
+    """被转发的原推文作者"""
+    is_note_tweet: bool = False
+
+
+class FxResponse(Struct):
+    code: int
+    message: str = ""
+    tweet: FxTweet | None = None
