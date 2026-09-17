@@ -218,12 +218,12 @@ class TwitterParser(BaseParser):
             description=tweet.author.description,
         )
 
-        # 视频 / 动图走 contents, 图片走 graphics (graphics 里的图片会以单图铺满显示)
-        graphics: list[str | Any] = []
+        # 与主接口一致: 图片 / 视频都走 contents (模板按图片网格渲染);
+        # graphics 是"图文插槽", 每项会铺满纵向堆叠 (文章式排版), 普通推文不能用。
         contents: list[Any] = []
         for media in tweet.media.all if tweet.media else []:
             if media.type == "photo":
-                graphics.append(self.create_image(media.url))
+                contents.append(self.create_image(media.url))
                 continue
             if video_url := media.best_video_url:
                 contents.append(
@@ -254,7 +254,6 @@ class TwitterParser(BaseParser):
         return self.result(
             author=author,
             text=tweet.text,
-            graphics=graphics,
             contents=contents,
             timestamp=tweet.created_timestamp,
             url=tweet.url or f"https://x.com/{tweet.author.screen_name}/status/{tweet.id}",
