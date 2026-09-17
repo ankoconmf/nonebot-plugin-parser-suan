@@ -292,6 +292,9 @@ parser_instagram_ck=""
 # [本 fork] Instagram 解析使用的代理
 parser_instagram_proxy=""
 
+# [本 fork] X(Twitter) cookies(auth_token=xxx; ct0=xxx; ..., 浏览器导出), 用于 Grok 翻译等功能
+parser_x_ck=""
+
 # [本 fork] 抖音浏览器兜底(DrissionPage)的浏览器可执行文件路径, 留空则自动探测
 parser_browser_path=""
 
