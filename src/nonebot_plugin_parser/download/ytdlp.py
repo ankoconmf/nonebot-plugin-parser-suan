@@ -66,15 +66,17 @@ class YtdlpDownloader:
             from yt_dlp import _Params
 
         self._video_info_mapping = LimitedSizeDict[str, VideoInfo]()
+        # 带 cookies 取不到流、必须改用匿名的 URL (下载时也要保持一致)
+        self._no_cookie_urls = LimitedSizeDict[str, bool]()
         self._extract_base_opts: _Params = {
             "quiet": True,
             "skip_download": "1",
             "force_generic_extractor": True,
-            "extractor_args": {"youtube": {"player_client": ["web_embedded"]}},
+            "extractor_args": {"youtube": {"player_client": ["web_embedded", "default", "-android_vr"]}},
             "remote_components": ["ejs:github"],
         }
         self._download_base_opts: _Params = {
-            "extractor_args": {"youtube": {"player_client": ["web_embedded"]}},
+            "extractor_args": {"youtube": {"player_client": ["web_embedded", "default", "-android_vr"]}},
             "remote_components": ["ejs:github"],
         }
         self._url_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -88,32 +90,46 @@ class YtdlpDownloader:
         video_info = self._video_info_mapping.get(url, None)
         if video_info:
             return video_info
-        ydl_opts = self._extract_base_opts.copy()
 
-        if cookiefile and cookiefile.exists():
-            ydl_opts["cookiefile"] = str(cookiefile)
+        base_opts = self._extract_base_opts.copy()
+        use_cookies = bool(cookiefile and cookiefile.exists())
+        if use_cookies:
+            base_opts["cookiefile"] = str(cookiefile)
 
         def _extract(opts: dict) -> dict | None:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 return ydl.extract_info(url, download=False)
 
-        try:
-            info_dict = await asyncio.to_thread(_extract, ydl_opts)
-        except Exception as error:
-            # 预约/待开播的直播还没有任何可下载格式, yt-dlp 会直接报错,
-            # 这里放开 no formats 限制再取一次元数据, 但只接受"预约中"的结果,
-            # 避免把登录失效, 地区限制等错误也一起吞掉
-            try:
-                info_dict = await asyncio.to_thread(
-                    _extract,
-                    {**ydl_opts, "ignore_no_formats_error": True},
-                )
-            except Exception:
-                raise error from None
-            if not isinstance(info_dict, dict) or info_dict.get("live_status") != "is_upcoming":
-                raise error from None
+        # 依次尝试 (选项, 是否带 cookies, 是否只接受"未开播"):
+        # 1) 正常
+        # 2) 去掉 cookies —— 有些视频在登录态下反而拿不到流(账号受限), 匿名却可以
+        # 3) 放开 no formats —— 未开播的直播没有任何格式, 只用这一次取元数据
+        candidates: list[tuple[dict, bool, bool]] = [(base_opts, use_cookies, False)]
+        if use_cookies:
+            candidates.append((self._extract_base_opts.copy(), False, False))
+        candidates.append(({**base_opts, "ignore_no_formats_error": True}, use_cookies, True))
 
-        if not info_dict:
+        first_error: Exception | None = None
+        info_dict: dict | None = None
+        for opts, with_cookies, upcoming_only in candidates:
+            try:
+                result = await asyncio.to_thread(_extract, opts)
+            except Exception as error:
+                if first_error is None:
+                    first_error = error
+                continue
+            # 第 3 种只接受"未开播", 其它情况(登录失效/地区限制)不能吞掉错误
+            if not isinstance(result, dict) or (upcoming_only and result.get("live_status") != "is_upcoming"):
+                continue
+            info_dict = result
+            if use_cookies and not with_cookies:
+                # 记住这个 URL 要匿名, 下载时保持一致(流的 URL 与请求会话绑定)
+                self._no_cookie_urls[url] = True
+            break
+
+        if info_dict is None:
+            if first_error is not None:
+                raise first_error from None
             raise ParseException("获取视频信息失败")
 
         video_info = convert(info_dict, VideoInfo)
@@ -149,7 +165,8 @@ class YtdlpDownloader:
             ydl_opts["format"] = f"bv[filesize<={duration // 10 + 10}M]+ba/b[filesize<={duration // 8 + 10}M]"
             ydl_opts["postprocessors"] = [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}]
 
-            if cookiefile and cookiefile.exists():
+            # 提取时若发现该视频在登录态下拿不到流, 下载也必须匿名
+            if cookiefile and cookiefile.exists() and url not in self._no_cookie_urls:
                 ydl_opts["cookiefile"] = str(cookiefile)
 
             try:
@@ -187,7 +204,8 @@ class YtdlpDownloader:
                 }
             ]
 
-            if cookiefile and cookiefile.exists():
+            # 提取时若发现该视频在登录态下拿不到流, 下载也必须匿名
+            if cookiefile and cookiefile.exists() and url not in self._no_cookie_urls:
                 ydl_opts["cookiefile"] = str(cookiefile)
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:

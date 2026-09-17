@@ -97,8 +97,11 @@ class YouTubeParser(BaseParser):
 
     def __init__(self):
         super().__init__()
-        self.cookies_file = pconfig.config_dir / "ytb_cookies.txt"
+        # 只有配置了 cookies 时才使用该文件; 否则磁盘上残留的旧 ytb_cookies.txt
+        # 会继续被带上(删掉配置项也不会失效), 导致改配置看起来"没生效"
+        self.cookies_file = None
         if pconfig.ytb_ck:
+            self.cookies_file = pconfig.config_dir / "ytb_cookies.txt"
             save_cookies_with_netscape(
                 pconfig.ytb_ck,
                 self.cookies_file,
