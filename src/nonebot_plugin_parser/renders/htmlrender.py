@@ -39,6 +39,9 @@ class HtmlRenderer(ImageRenderer):
         logo = resources.RESOURCES_DIR / f"{self.result.platform.name}.png"
         logo = logo.as_uri() if logo.exists() else None
 
+        grok_icon = resources.GROK_ICON_PATH
+        grok_icon = grok_icon.as_uri() if grok_icon.exists() else None
+
         font = pconfig.custom_font or resources.DEFAULT_FONT_PATH
         font = font.as_uri() if font.exists() else None
 
@@ -46,6 +49,7 @@ class HtmlRenderer(ImageRenderer):
             template_path=str(self.templates_dir),
             template_name="card.html.jinja2",
             logo=logo,
+            grok_icon=grok_icon,
             font=font,
             result=self.result,
             font_weight=pconfig.custom_font_weight,

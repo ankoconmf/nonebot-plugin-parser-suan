@@ -9,6 +9,8 @@ DEFAULT_AVATAR_PATH = RESOURCES_DIR / "avatar.png"
 """默认头像文件路径"""
 DEFAULT_VIDEO_BUTTON_PATH = RESOURCES_DIR / "play.png"
 """默认视频播放按钮文件路径"""
+GROK_ICON_PATH = RESOURCES_DIR / "grok.png"
+"""Grok 翻译标签图标 (黑色透明底, 夜间主题需反色)"""
 FALLBACK_PIC_DIR = RESOURCES_DIR / "fallback_pic"
 """下载失败显示的图片文件路径"""
 

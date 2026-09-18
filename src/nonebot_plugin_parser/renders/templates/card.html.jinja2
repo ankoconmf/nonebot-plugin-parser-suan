@@ -362,6 +362,18 @@
                 0 2px 8px -3px rgba(0, 0, 0, 0.12);
               overflow: hidden;
             }
+            .translation-label {
+              /* 独占一行, 靠左, 用主题色 */
+              display: flex;
+              justify-content: flex-start;
+              align-items: center;
+              gap: 3px;
+              margin-bottom: 2px;
+              font-size: 10px;
+              color: var(--primary);
+              line-height: 1.4;
+              white-space: nowrap;
+            }
             .translation-text {
               font-size: 15px;
               color: var(--ink-soft);
@@ -369,15 +381,14 @@
               white-space: pre-wrap;
               word-wrap: break-word;
             }
-            .translation-label {
-              float: right;
-              margin-left: 8px;
-              font-size: 10px;
-              color: var(--ink-faint);
-              opacity: 0.65;
-              line-height: 1.7;
-              white-space: nowrap;
+            .translation-label img {
+              width: 1.15em;
+              height: 1.15em;
+              object-fit: contain;
+              flex-shrink: 0;
             }
+            /* Grok 图标是黑色透明底, 夜间主题反色 */
+            [data-theme="dark"] .translation-label img { filter: invert(1); }
             /* 夜间: 玻璃底改为浅白低透明度 (文字颜色沿用 --ink-soft, 浅色/夜间一致) */
             [data-theme="dark"] .translation {
               background: rgba(255, 255, 255, 0.06);
@@ -385,7 +396,6 @@
                 inset 0 1px 0 rgba(255, 255, 255, 0.10),
                 0 2px 8px -3px rgba(0, 0, 0, 0.35);
             }
-            [data-theme="dark"] .translation-label { opacity: 0.55; }
 
             /* ──────── 图片网格 ──────── */
             .image-container {
@@ -537,6 +547,11 @@
             {% endif %}
         {% endmacro %}
 
+        {# ── 翻译标签 (Grok 图标 + 源语言), 独占一行 ── #}
+        {% macro translation_label(from_lang) %}
+            <div class="translation-label">{% if grok_icon %}<img src="{{ grok_icon | safe }}" alt="Grok" />{% endif %}<span>Grok 翻译{% if from_lang %} · {{ from_lang }}{% endif %}</span></div>
+        {% endmacro %}
+
         {% macro render_card(result, is_repost=False) %}
             {% set content_type = result.content_type %}
             {% set video = result.video %}
@@ -651,8 +666,7 @@
                     {% if result.text %}<div class="text">{{ result.text }}</div>{% endif %}
                     {% if result.extra.get('translation') %}
                         <div class="translation">
-                            <span class="translation-label">Grok 翻译{% if result.extra.get('translation_from') %} · {{ result.extra.get('translation_from') }}{% endif %}</span>
-                            <div class="translation-text">{{ result.extra.get('translation') }}</div>
+                            {{ translation_label(result.extra.get('translation_from')) }}<span class="translation-text">{{ result.extra.get('translation') | trim }}</span>
                         </div>
                     {% endif %}
                 {% endif %}
@@ -693,8 +707,7 @@
                         {% if result.text %}<div class="intro-text">{{ result.text }}</div>{% endif %}
                         {% if translation %}
                             <div class="translation">
-                                <span class="translation-label">Grok 翻译{% if result.extra.get('translation_from') %} · {{ result.extra.get('translation_from') }}{% endif %}</span>
-                                <div class="translation-text">{{ translation }}</div>
+                                {{ translation_label(result.extra.get('translation_from')) }}<span class="translation-text">{{ translation | trim }}</span>
                             </div>
                         {% endif %}
                     </div>

@@ -46,6 +46,36 @@ TRANSLATION_API: str = "https://api.x.com/2/grok/translation.json"
 GUEST_TOKEN_TTL: float = 2 * 60 * 60
 """游客 token 有效期(秒), 超过后重新激活"""
 
+LANGUAGE_NAMES: dict[str, str] = {
+    "ja": "日语",
+    "en": "英语",
+    "ko": "韩语",
+    "fr": "法语",
+    "de": "德语",
+    "es": "西班牙语",
+    "ru": "俄语",
+    "pt": "葡萄牙语",
+    "it": "意大利语",
+    "th": "泰语",
+    "vi": "越南语",
+    "id": "印尼语",
+    "ar": "阿拉伯语",
+    "tr": "土耳其语",
+    "hi": "印地语",
+    "zh-cn": "简体中文",
+    "zh-tw": "繁体中文",
+    "zh": "中文",
+}
+"""推文语言代码 -> 中文名"""
+
+
+def language_name(code: str | None) -> str | None:
+    """语言代码转中文名, 未知代码原样返回"""
+    if not code:
+        return None
+    code = code.strip()
+    return LANGUAGE_NAMES.get(code.lower(), code)
+
 V2_BEARER: str = (
     "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8x"
     "nZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
@@ -229,7 +259,7 @@ class TwitterParser(BaseParser):
             translated = (response.json().get("result") or {}).get("text")
             if not isinstance(translated, str) or not translated:
                 raise ValueError("translation text missing")
-            return translated, lang
+            return translated, language_name(lang)
         except Exception:
             logger.opt(exception=True).debug("获取 X 翻译失败")
             return None
