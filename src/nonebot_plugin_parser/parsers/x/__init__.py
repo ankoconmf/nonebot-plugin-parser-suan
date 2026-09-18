@@ -15,6 +15,7 @@ X 直连失败时回退到 api.fxtwitter.com (旧的 vxtwitter 目前已 403 不
 from re import Match
 from uuid import uuid4
 from collections.abc import Callable
+from time import monotonic
 from typing import Any, ClassVar
 
 from httpx import AsyncClient
@@ -42,12 +43,12 @@ GUEST_ACTIVATE_API: str = "https://api.x.com/1.1/guest/activate.json"
 TRANSLATION_API: str = "https://api.x.com/2/grok/translation.json"
 """翻译接口(Grok), 需要登录 cookie"""
 
-GUEST_TOKEN_MAX_USES: int = 40
-"""同一游客 token 复用次数上限, 超过后重新激活"""
+GUEST_TOKEN_TTL: float = 2 * 60 * 60
+"""游客 token 有效期(秒), 超过后重新激活"""
 
 V2_BEARER: str = (
     "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8x"
-    "nZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+    "nZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 )
 """X web 端内置 Bearer"""
 
@@ -115,11 +116,6 @@ fx_decoder = Decoder(FxResponse)
 class TwitterParser(BaseParser):
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.TWITTER, display_name="X")
 
-    guest_token: str | None = None
-    """游客 token, 未配置 cookie 时使用"""
-    guest_token_uses: int = 0
-    """当前游客 token 已复用次数"""
-
     def __init__(self):
         super().__init__()
         self.headers.update({"Authorization": V2_BEARER})
@@ -129,38 +125,54 @@ class TwitterParser(BaseParser):
                 self.cookies = ck2dict(ck)
             except ValueError:
                 logger.warning("X cookies 格式异常, 已忽略")
+        # 游客 token 用实例状态, 避免多个 parser 实例互相干扰
+        self.guest_token: str | None = None
+        self.guest_token_created_at: float = 0.0
 
     @property
     def _has_cookies(self) -> bool:
         """是否配置了登录 cookie (翻译需要)"""
         return bool(self.cookies and self.cookies.get("auth_token"))
 
+    def _get_csrf_token(self) -> str:
+        """CSRF token: 优先复用 cookie 里的 ct0 (与真实浏览器一致), 否则随机生成"""
+        ct0 = (self.cookies or {}).get("ct0", "").strip()
+        # 含分隔符/换行的值会破坏请求头, 退回随机值
+        if ct0 and not any(ch in ct0 for ch in ";\r\n"):
+            return ct0
+        return uuid4().hex
+
     # ------------------------------------------------------------------
     # 鉴权: 优先 cookie, 否则走游客 token
     # ------------------------------------------------------------------
 
     async def _ensure_guest_token(self, client: AsyncClient) -> str:
-        """激活并缓存游客 token"""
+        """激活游客 token (带 TTL 缓存)"""
         response = await client.post(GUEST_ACTIVATE_API)
         try:
             response.raise_for_status()
-            self.guest_token = response.json()["guest_token"]
+            token = response.json().get("guest_token")
+            if not isinstance(token, str) or not token:
+                raise ValueError("guest_token missing")
         except Exception as e:
             raise ParseException(f"获取游客 token 失败: {response.text[:120]}") from e
-        self.guest_token_uses = 0
-        return self.guest_token
+
+        self.guest_token = token
+        self.guest_token_created_at = monotonic()
+        return token
 
     async def _get_auth_headers(self, client: AsyncClient) -> dict[str, str]:
         """构造 GraphQL 请求头 (游客 token 或登录 cookie)"""
-        csrf_token = str(uuid4()).replace("-", "")
+        csrf_token = self._get_csrf_token()
         headers = {
             "x-twitter-active-user": "yes",
             "x-twitter-client-language": "zh-cn",
             "x-csrf-token": csrf_token,
         }
-        if self.cookies:
+        if self._has_cookies:
+            cookies = self.cookies or {}
             headers["Cookie"] = (
-                f"auth_token={self.cookies.get('auth_token', '')}; ct0={csrf_token};"
+                f"auth_token={cookies.get('auth_token', '')}; ct0={csrf_token};"
             )
             headers["x-twitter-auth-type"] = "OAuth2Session"
         else:
@@ -168,14 +180,11 @@ class TwitterParser(BaseParser):
         return headers
 
     async def _guest_token(self, client: AsyncClient) -> str:
-        """复用游客 token, 超过次数上限后重新激活"""
-        if self.guest_token is None:
-            return await self._ensure_guest_token(client)
-
-        self.guest_token_uses += 1
-        if self.guest_token_uses > GUEST_TOKEN_MAX_USES:
-            self.guest_token = None
-            self.guest_token_uses = 0
+        """游客 token 超过 TTL 后重新激活"""
+        if (
+            self.guest_token is None
+            or monotonic() - self.guest_token_created_at >= GUEST_TOKEN_TTL
+        ):
             return await self._ensure_guest_token(client)
         return self.guest_token
 
@@ -194,11 +203,22 @@ class TwitterParser(BaseParser):
     async def _get_translation(
         self,
         client: AsyncClient,
-        tweet_id: str,
-    ) -> str | None:
-        """获取推文的 AI 翻译, 失败静默返回 None"""
+        tweet: Tweet | FxTweet,
+    ) -> tuple[str, str | None] | None:
+        """获取推文的翻译, 返回 (译文, 原文语言); 不需要或失败时返回 None
+
+        主备两个源的推文对象字段不同, 这里统一取 id / 语言 / 是否需要翻译。
+        """
         if not self._has_cookies:
             return None
+
+        if isinstance(tweet, Tweet):
+            tweet_id, lang, needed = tweet.rest_id, tweet.legacy.lang, tweet.needs_translation()
+        else:
+            tweet_id, lang, needed = tweet.id, tweet.lang, tweet.needs_translation
+        if not needed:
+            return None
+
         try:
             response = await client.post(
                 TRANSLATION_API,
@@ -206,7 +226,10 @@ class TwitterParser(BaseParser):
                 json={"content_type": "POST", "id": tweet_id, "dst_lang": "zh"},
             )
             response.raise_for_status()
-            return (response.json().get("result") or {}).get("text") or None
+            translated = (response.json().get("result") or {}).get("text")
+            if not isinstance(translated, str) or not translated:
+                raise ValueError("translation text missing")
+            return translated, lang
         except Exception:
             logger.opt(exception=True).debug("获取 X 翻译失败")
             return None
@@ -313,8 +336,8 @@ class TwitterParser(BaseParser):
             )
             extra["source_id"] = f"@{user.core.screen_name}"
 
-        if translation := await self._get_translation(client, tweet.rest_id):
-            extra["translation"] = translation
+        if translation := await self._get_translation(client, tweet):
+            extra["translation"], extra["translation_from"] = translation
 
         return self.result(
             author=author,
@@ -377,9 +400,11 @@ class TwitterParser(BaseParser):
             )
             extra["source_id"] = f"@{tweet.author.screen_name}"
 
-        # 回退源没有翻译数据, 仍然用 X 的翻译接口补齐
-        if translation := await self._get_translation(client, tweet.id):
-            extra["translation"] = translation
+        # 回退源没有翻译数据, 仍然用 X 的翻译接口补齐;
+        # 回退响应没有 is_translatable, 只按语言粗略判断 (语言缺失时不跳过)
+        tweet.needs_translation = not (tweet.lang or "").lower().startswith("zh")
+        if translation := await self._get_translation(client, tweet):
+            extra["translation"], extra["translation_from"] = translation
 
         return self.result(
             author=author,
@@ -454,7 +479,14 @@ class TwitterParser(BaseParser):
                     f"主接口获取数据失败 {response.status_code}: {response.text[:200]}"
                 )
 
-            tweet_result = (response.json().get("data") or {}).get("tweetResult") or {}
+            try:
+                payload = response.json()
+            except Exception as e:
+                raise ParseException("主接口返回了无效 JSON") from e
+            if not isinstance(payload, dict):
+                raise ParseException("主接口返回了无效 JSON 对象")
+
+            tweet_result = (payload.get("data") or {}).get("tweetResult") or {}
             if not tweet_result:
                 raise ParseException("主接口未返回 tweetResult")
 

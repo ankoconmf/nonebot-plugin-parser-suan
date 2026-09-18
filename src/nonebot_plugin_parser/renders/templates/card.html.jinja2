@@ -651,7 +651,7 @@
                     {% if result.text %}<div class="text">{{ result.text }}</div>{% endif %}
                     {% if result.extra.get('translation') %}
                         <div class="translation">
-                            <span class="translation-label">Grok 翻译</span>
+                            <span class="translation-label">Grok 翻译{% if result.extra.get('translation_from') %} · {{ result.extra.get('translation_from') }}{% endif %}</span>
                             <div class="translation-text">{{ result.extra.get('translation') }}</div>
                         </div>
                     {% endif %}
@@ -693,7 +693,7 @@
                         {% if result.text %}<div class="intro-text">{{ result.text }}</div>{% endif %}
                         {% if translation %}
                             <div class="translation">
-                                <span class="translation-label">Grok 翻译</span>
+                                <span class="translation-label">Grok 翻译{% if result.extra.get('translation_from') %} · {{ result.extra.get('translation_from') }}{% endif %}</span>
                                 <div class="translation-text">{{ translation }}</div>
                             </div>
                         {% endif %}

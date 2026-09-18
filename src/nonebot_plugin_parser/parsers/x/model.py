@@ -449,6 +449,8 @@ class TweetLegacy(Struct):
     """utc 时间字符串, 例如 'Fri Feb 20 16:33:16 +0000 2026'"""
     display_text_range: tuple[int, int] = (0, 0)
     """推文文本范围, 用于裁掉尾部 t.co 链接"""
+    lang: str = ""
+    """推文语言, 例如 'ja' / 'en' / 'zh'; 中文推文不需要翻译"""
     possibly_sensitive: bool = False
     """是否敏感内容"""
     in_reply_to_status_id_str: str | None = None
@@ -520,6 +522,8 @@ class Tweet(Struct):
     """浏览数, 部分响应缺失"""
     rest_id: str = ""
     """推文 id"""
+    is_translatable: bool = False
+    """X 是否提供翻译, 部分响应缺失时按 False 处理"""
     card: TweetCard | None = None
     """推文链接卡片"""
     note_tweet: NoteTweet | None = None
@@ -530,6 +534,13 @@ class Tweet(Struct):
     """被引用推文 (转发时带评论)"""
     retweeted_status_result: TweetEntry | None = None
     """被转发推文 (直接转发)"""
+
+    def needs_translation(self) -> bool:
+        """是否需要翻译: X 标记可翻译, 且原文不是中文"""
+        lang = (self.legacy.lang or "").lower()
+        if not lang or lang.startswith("zh"):
+            return False
+        return self.is_translatable
 
     def get_article_result(self) -> ArticleResult | None:
         article_results = self.article.article_results if self.article else None
@@ -613,6 +624,7 @@ class TweetData(Struct):
             legacy=legacy,
             views=self.views,
             rest_id=rest_id,
+            is_translatable=self.is_translatable,
             card=self.card,
             note_tweet=self.note_tweet,
             article=self.article,
@@ -624,6 +636,7 @@ class TweetData(Struct):
     legacy: TweetLegacy | None = None
     views: Views | None = None
     rest_id: str | None = None
+    is_translatable: bool = False
     card: TweetCard | None = None
     note_tweet: NoteTweet | None = None
     article: Article | None = None
@@ -699,6 +712,8 @@ class FxTweet(Struct):
     author: FxAuthor = field(default_factory=FxAuthor)
     created_timestamp: int | None = None
     """创建时间(Unix 秒)"""
+    lang: str | None = None
+    """原文语言, 用于判断是否需要翻译"""
     likes: int = 0
     retweets: int = 0
     replies: int = 0
@@ -711,6 +726,9 @@ class FxTweet(Struct):
     reposted_by: str | None = None
     """被转发的原推文作者"""
     is_note_tweet: bool = False
+
+    needs_translation: bool = True
+    """备用接口判断是否需要翻译 (默认需要, 由调用方按语言覆盖)"""
 
 
 class FxResponse(Struct):
