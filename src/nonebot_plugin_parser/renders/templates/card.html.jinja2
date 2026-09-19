@@ -531,9 +531,23 @@
               display: flex;
               flex-direction: column;
               gap: 10px;
-              padding: 16px;
-              background: var(--panel);
+            }
+            /* 连续文字合并为一张卡片, 便于阅读 */
+            .graphics-text-card {
+              display: flex;
+              flex-direction: column;
+              gap: 10px;
+              padding: 16px 18px;
+              background: var(--glass);
+              backdrop-filter: blur(18px) saturate(1.4);
+              -webkit-backdrop-filter: blur(18px) saturate(1.4);
+              border: 1px solid var(--intro-stroke);
               border-radius: var(--radius-sm);
+            }
+            /* 文章正文: 字号更大、颜色更深, 便于阅读 (仅图文渲染) */
+            .graphics-text-card .text {
+              font-size: 19px;
+              color: var(--ink);
             }
             .graphics-alt { font-size: 13px; color: var(--ink-faint); text-align: center; font-style: italic; }
 
@@ -689,20 +703,30 @@
                         </div>
                     {% endif %}
                 {% elif result.graphics %}
-                    {# 图文: 标题置于正文上方 #}
+                    {# 图文: 标题置于正文上方; 连续文字合并为一张卡片, 图片独立排列 #}
                     {% if result.title %}<div class="title">{{ result.title }}</div>{% endif %}
-                    {% for text_or_img in result.graphics %}
-                        <div class="graphics-item">
-                            {% if text_or_img is string %}
-                                <div class="text">{{ text_or_img }}</div>
-                            {% else %}
-                                {% set img_uri = text_or_img.path_task.uri %}
+                    {% set ns = namespace(in_text=false) %}
+                    {% for item in result.graphics %}
+                        {% if item is string %}
+                            {% if not ns.in_text %}
+                                {% set ns.in_text = true %}
+                                <div class="graphics-text-card">
+                            {% endif %}
+                            <div class="text">{{ item }}</div>
+                        {% else %}
+                            {% if ns.in_text %}
+                                {% set ns.in_text = false %}
+                                </div>
+                            {% endif %}
+                            <div class="graphics-item">
+                                {% set img_uri = item.path_task.uri %}
                                 {% set img_uri = (img_uri if img_uri else fallback_pic) %}
                                 <div class="image-container"><img src="{{ img_uri | safe }}" class="single-image" alt="graphics" /></div>
-                            {% endif %}
-                            {% if text_or_img.alt %}<div class="graphics-alt">{{ text_or_img.alt }}</div>{% endif %}
-                        </div>
+                                {% if item.alt %}<div class="graphics-alt">{{ item.alt }}</div>{% endif %}
+                            </div>
+                        {% endif %}
                     {% endfor %}
+                    {% if ns.in_text %}</div>{% endif %}
                 {% endif %}
 
                 {# ── 标题 (头像上方); 图文已在正文上方渲染, 此处跳过避免重复 ── #}

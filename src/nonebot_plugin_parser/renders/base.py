@@ -1,4 +1,5 @@
 import uuid
+from io import BytesIO
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 from pathlib import Path
@@ -7,11 +8,55 @@ from collections.abc import AsyncGenerator
 from typing_extensions import override
 
 import aiofiles
+from PIL import Image
+from nonebot import logger
 
 from ..config import pconfig
 from ..helper import UniHelper, UniMessage, ForwardNodeInner
 from ..parsers import ParseResult, AudioContent, ImageContent, VideoContent
 from ..exception import IgnoreException, DownloadException
+
+MAX_RENDER_PIXELS: int = 24_000_000
+"""渲染图压缩时的目标最大像素数, 超过则等比缩小"""
+MAX_RENDER_BYTES: int = 20 * 1024 * 1024
+"""渲染图最大字节数, 超过则转为 JPEG 压缩"""
+RENDER_JPEG_QUALITY: int = 85
+"""渲染图压缩时使用的 JPEG 质量"""
+
+
+def compress_render_image(raw: bytes) -> tuple[bytes, str]:
+    """渲染图过大时等比缩小并转 JPEG(白底), 否则原样返回 ``(bytes, 扩展名)``"""
+    # 先按字节数快速判断, 未超阈值直接返回, 不做任何解码
+    if len(raw) <= MAX_RENDER_BYTES:
+        return raw, "png"
+
+    try:
+        with Image.open(BytesIO(raw)) as img:
+            width, height = img.size  # PNG 头部即含宽高, 此处不触发完整解码
+            img = img.convert("RGBA")
+
+            if width * height > MAX_RENDER_PIXELS:
+                ratio = (MAX_RENDER_PIXELS / (width * height)) ** 0.5
+                img = img.resize(
+                    (max(1, round(width * ratio)), max(1, round(height * ratio))),
+                    Image.Resampling.LANCZOS,
+                )
+
+            # 透明区域合成到白底 (QQ 等客户端白底下观感一致)
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            background.paste(img, mask=img.getchannel("A"))
+            buffer = BytesIO()
+            background.save(
+                buffer, format="JPEG", quality=RENDER_JPEG_QUALITY, optimize=True
+            )
+            logger.debug(
+                f"渲染图已压缩: {width}x{height} -> {img.width}x{img.height}, "
+                f"{len(raw)} -> {len(buffer.getvalue())} bytes"
+            )
+            return buffer.getvalue(), "jpg"
+    except Exception:
+        logger.opt(exception=True).warning("渲染图压缩失败, 使用原图")
+        return raw, "png"
 
 
 class BaseRenderer(ABC):
@@ -136,10 +181,11 @@ class ImageRenderer(BaseRenderer):
             yield message
 
     async def cache_or_render_image(self):
-        """获取缓存图片"""
+        """获取缓存图片 (过大时压缩后再保存发送)"""
         if self.result.render_image is None:
             image_raw = await self.render_image()
-            image_path = await self.save_img(image_raw)
+            image_raw, ext = compress_render_image(image_raw)
+            image_path = await self.save_img(image_raw, ext)
             self.result.render_image = image_path
             if pconfig.use_base64:
                 return UniHelper.img_seg(image_raw)
@@ -147,9 +193,9 @@ class ImageRenderer(BaseRenderer):
         return UniHelper.img_seg(self.result.render_image)
 
     @classmethod
-    async def save_img(cls, raw: bytes) -> Path:
+    async def save_img(cls, raw: bytes, ext: str = "png") -> Path:
         """保存图片"""
-        file_name = f"{uuid.uuid4().hex}.png"
+        file_name = f"{uuid.uuid4().hex}.{ext}"
         image_path = pconfig.cache_dir / file_name
         async with aiofiles.open(image_path, "wb+") as f:
             await f.write(raw)
