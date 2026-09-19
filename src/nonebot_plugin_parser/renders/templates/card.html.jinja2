@@ -80,7 +80,6 @@
               --panel: #272727;
               --glass: rgba(33, 33, 33, 0.55);
               --hair: rgba(255, 255, 255, 0.10);
-              --glass-white: rgba(255, 255, 255, 0.07);
               --intro-stroke: rgba(255, 255, 255, 0.14);
               --image-stroke: rgba(255, 255, 255, 0.22);
               --grid-stroke: rgba(255, 255, 255, 0.14);
@@ -113,7 +112,6 @@
 
             /* ──────── 主卡片 ──────── */
             .card {
-              --glass-white: rgba(255, 255, 255, 0.55);
               position: relative;
               width: 100%;
               background:
@@ -352,7 +350,7 @@
             .translation {
               margin-top: 10px;
               padding: 7px 11px;
-              background: var(--glass-white);
+              background: var(--glass);
               backdrop-filter: blur(18px) saturate(1.4);
               -webkit-backdrop-filter: blur(18px) saturate(1.4);
               border: 1px solid var(--intro-stroke);
@@ -387,15 +385,64 @@
               object-fit: contain;
               flex-shrink: 0;
             }
+
+            /* ──────── 投票 (opt-in: result.extra['poll']) ──────── */
+            .poll {
+              margin-top: 10px;
+              padding: 10px 12px 8px;
+              background: var(--glass);
+              backdrop-filter: blur(18px) saturate(1.4);
+              -webkit-backdrop-filter: blur(18px) saturate(1.4);
+              border: 1px solid var(--intro-stroke);
+              border-radius: 12px;
+              box-shadow:
+                inset 0 1px 0 var(--surface-highlight),
+                0 2px 8px -3px rgba(0, 0, 0, 0.12);
+              overflow: hidden;
+            }
+            .poll-choice {
+              position: relative;
+              margin-bottom: 6px;
+              padding: 6px 10px;
+              border-radius: 8px;
+              /* 半透明底, 保留外层毛玻璃质感 */
+              background: rgba(0, 0, 0, 0.05);
+              overflow: hidden;
+            }
+            /* 票数占比条 */
+            .poll-bar {
+              position: absolute;
+              left: 0; top: 0; bottom: 0;
+              background: var(--primary);
+              opacity: 0.22;
+              border-radius: 8px;
+            }
+            .poll-choice-row {
+              position: relative;
+              display: flex;
+              justify-content: space-between;
+              gap: 10px;
+              font-size: 14px;
+              color: var(--ink-soft);
+              line-height: 1.5;
+            }
+            .poll-choice-row .poll-percent {
+              font-weight: 600;
+              color: var(--ink);
+              font-variant-numeric: tabular-nums;
+              flex-shrink: 0;
+            }
+            .poll-meta {
+              display: flex;
+              justify-content: space-between;
+              gap: 10px;
+              margin-top: 2px;
+              font-size: 11px;
+              color: var(--ink-faint);
+            }
+            .poll-meta .poll-finished { color: var(--primary); }
             /* Grok 图标是黑色透明底, 夜间主题反色 */
             [data-theme="dark"] .translation-label img { filter: invert(1); }
-            /* 夜间: 玻璃底改为浅白低透明度 (文字颜色沿用 --ink-soft, 浅色/夜间一致) */
-            [data-theme="dark"] .translation {
-              background: rgba(255, 255, 255, 0.06);
-              box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.10),
-                0 2px 8px -3px rgba(0, 0, 0, 0.35);
-            }
 
             /* ──────── 图片网格 ──────── */
             .image-container {
@@ -710,6 +757,30 @@
                                 {{ translation_label(result.extra.get('translation_from')) }}<span class="translation-text">{{ translation | trim }}</span>
                             </div>
                         {% endif %}
+                    </div>
+                {% endif %}
+
+                {# ── 投票 (opt-in: result.extra['poll']) ── #}
+                {% set poll = result.extra.get('poll') %}
+                {% if not is_repost and poll %}
+                    <div class="poll">
+                        {% for choice in poll.choices %}
+                            <div class="poll-choice">
+                                <div class="poll-bar" style="width: {{ choice.percent }}%"></div>
+                                <div class="poll-choice-row">
+                                    <span class="poll-label">{{ choice.label }}</span>
+                                    <span class="poll-percent">{{ choice.percent }}%</span>
+                                </div>
+                            </div>
+                        {% endfor %}
+                        <div class="poll-meta">
+                            <span>{{ poll.total_votes }} 票</span>
+                            {% if poll.finished %}
+                                <span class="poll-finished">投票已结束{% if poll.ends_at_local %} · {{ poll.ends_at_local }}{% endif %}</span>
+                            {% elif poll.ends_at_local %}
+                                <span>截止 {{ poll.ends_at_local }}</span>
+                            {% endif %}
+                        </div>
                     </div>
                 {% endif %}
 

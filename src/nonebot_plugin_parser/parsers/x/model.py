@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from msgspec import Struct, field
@@ -697,6 +697,30 @@ class FxMediaGroup(Struct):
     all: list[FxMedia] = field(default_factory=list)
 
 
+class FxPollChoice(Struct):
+    label: str = ""
+    count: int = 0
+    percentage: float = 0.0
+
+
+class FxPoll(Struct):
+    choices: list[FxPollChoice] = field(default_factory=list)
+    total_votes: int = 0
+    ends_at: str = ""
+    time_left_en: str | None = None
+
+    def to_poll(self) -> Poll:
+        """转换为本地投票结构"""
+        return Poll(
+            choices=[
+                PollChoice(label=c.label, count=c.count, percent=c.percentage)
+                for c in self.choices
+            ],
+            total_votes=self.total_votes,
+            ends_at=self.ends_at,
+        )
+
+
 class FxAuthor(Struct):
     name: str = ""
     screen_name: str = ""
@@ -721,6 +745,8 @@ class FxTweet(Struct):
     bookmarks: int = 0
     views: int | None = None
     media: FxMediaGroup | None = None
+    poll: FxPoll | None = None
+    """投票"""
     quote: "FxTweet | None" = None
     """引用的推文"""
     reposted_by: str | None = None
@@ -735,3 +761,50 @@ class FxResponse(Struct):
     code: int
     message: str = ""
     tweet: FxTweet | None = None
+
+
+# ---------------------------------------------------------------------------
+# 投票 (X 投票是卡片形态: card.name 形如 'poll4choice_text_only')
+# ---------------------------------------------------------------------------
+
+
+class PollChoice(Struct):
+    label: str = ""
+    """选项文字"""
+    count: int = 0
+    """票数"""
+    percent: float = 0.0
+    """占比(百分比数值, 如 45.5)"""
+
+
+class Poll(Struct):
+    choices: list[PollChoice] = field(default_factory=list)
+    total_votes: int = 0
+    """总票数"""
+    ends_at: str = ""
+    """投票结束时间 (ISO8601 UTC)"""
+
+    @property
+    def ends_at_local(self) -> str:
+        """结束时间转本地时间文本, 解析失败返回空串"""
+        if not self.ends_at:
+            return ""
+        try:
+            return _parse_iso_utc(self.ends_at).astimezone().strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            return ""
+
+    @property
+    def finished(self) -> bool:
+        """投票是否已结束"""
+        if not self.ends_at:
+            return False
+        try:
+            return _parse_iso_utc(self.ends_at) <= datetime.now(timezone.utc)
+        except ValueError:
+            return False
+
+
+def _parse_iso_utc(value: str) -> datetime:
+    """解析 X 的 ISO8601 时间 (形如 2026-09-20T10:41:49Z)"""
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))

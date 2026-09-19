@@ -14,8 +14,9 @@ X 直连失败时回退到 api.fxtwitter.com (旧的 vxtwitter 目前已 403 不
 
 from re import Match
 from uuid import uuid4
-from collections.abc import Callable
 from time import monotonic
+from json import loads as json_loads
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 from httpx import AsyncClient
@@ -24,8 +25,8 @@ from msgspec.json import Decoder, encode
 
 from nonebot import logger
 
-from .model import FxResponse, FxTweet, Tweet, TweetEntry
-from .util import LinkCardData, parse_link_card
+from .model import FxResponse, FxTweet, Poll, PollChoice, Tweet, TweetEntry
+from .util import LinkCardData, parse_link_card, parse_poll
 from ..base import BaseParser, PlatformEnum, ParseException, handle
 from ..cookie import ck2dict
 from ..data import Platform, ParseResult
@@ -230,12 +231,49 @@ class TwitterParser(BaseParser):
     # 翻译 (Grok): 需要登录 cookie
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _parse_translation_body(text: str) -> tuple[str | None, dict[int, str]]:
+        """解析翻译响应
+
+        投票推文返回的是 NDJSON (每行一个 JSON):
+            {"result": {"content_type": "POST", "text": "..."}}
+            {"result": {"content_type": "POLL", "index": 1, "text": "..."}}
+        普通推文只返回第一行。
+        """
+        tweet_text: str | None = None
+        poll_choices: dict[int, str] = {}
+
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                payload = json_loads(line)
+            except ValueError:
+                continue
+            result = payload.get("result") if isinstance(payload, dict) else None
+            if not isinstance(result, dict):
+                continue
+
+            translated = result.get("text")
+            if not isinstance(translated, str) or not translated:
+                continue
+
+            if result.get("content_type") == "POLL":
+                index = result.get("index")
+                if isinstance(index, int):
+                    poll_choices[index] = translated
+            elif tweet_text is None:
+                tweet_text = translated
+
+        return tweet_text, poll_choices
+
     async def _get_translation(
         self,
         client: AsyncClient,
         tweet: Tweet | FxTweet,
-    ) -> tuple[str, str | None] | None:
-        """获取推文的翻译, 返回 (译文, 原文语言); 不需要或失败时返回 None
+    ) -> tuple[str, str | None, dict[int, str]] | None:
+        """获取推文的翻译, 返回 (译文, 原文语言, 选项译文); 不需要或失败时返回 None
 
         主备两个源的推文对象字段不同, 这里统一取 id / 语言 / 是否需要翻译。
         """
@@ -256,10 +294,10 @@ class TwitterParser(BaseParser):
                 json={"content_type": "POST", "id": tweet_id, "dst_lang": "zh"},
             )
             response.raise_for_status()
-            translated = (response.json().get("result") or {}).get("text")
-            if not isinstance(translated, str) or not translated:
+            translated, poll_choices = self._parse_translation_body(response.text)
+            if not translated:
                 raise ValueError("translation text missing")
-            return translated, language_name(lang)
+            return translated, language_name(lang), poll_choices
         except Exception:
             logger.opt(exception=True).debug("获取 X 翻译失败")
             return None
@@ -366,8 +404,18 @@ class TwitterParser(BaseParser):
             )
             extra["source_id"] = f"@{user.core.screen_name}"
 
+        # 投票选项的译文由翻译接口一并返回 (content_type=POLL)
+        poll_choices: dict[int, str] = {}
         if translation := await self._get_translation(client, tweet):
-            extra["translation"], extra["translation_from"] = translation
+            translated, translation_from, poll_choices = translation
+            extra["translation"] = translated
+            extra["translation_from"] = translation_from
+
+        if poll := parse_poll(tweet.card):
+            for index, choice in enumerate(poll.choices, start=1):
+                if label := poll_choices.get(index):
+                    choice.label = label
+            extra["poll"] = poll
 
         return self.result(
             author=author,
@@ -433,8 +481,18 @@ class TwitterParser(BaseParser):
         # 回退源没有翻译数据, 仍然用 X 的翻译接口补齐;
         # 回退响应没有 is_translatable, 只按语言粗略判断 (语言缺失时不跳过)
         tweet.needs_translation = not (tweet.lang or "").lower().startswith("zh")
+        poll_choices: dict[int, str] = {}
         if translation := await self._get_translation(client, tweet):
-            extra["translation"], extra["translation_from"] = translation
+            translated, translation_from, poll_choices = translation
+            extra["translation"] = translated
+            extra["translation_from"] = translation_from
+
+        if tweet.poll is not None and tweet.poll.choices:
+            poll = tweet.poll.to_poll()
+            for index, choice in enumerate(poll.choices, start=1):
+                if label := poll_choices.get(index):
+                    choice.label = label
+            extra["poll"] = poll
 
         return self.result(
             author=author,
