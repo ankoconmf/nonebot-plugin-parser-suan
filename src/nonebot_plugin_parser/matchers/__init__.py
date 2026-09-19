@@ -6,6 +6,7 @@ from nonebot.params import CommandArg
 from nonebot.adapters import Message
 
 from .rule import SUPER_PRIVATE, Searched, SearchResult, on_keyword_regex
+from .filter import is_enabled
 from ..utils import LimitedSizeDict
 from ..config import pconfig
 from ..helper import UniHelper, UniMessage
@@ -88,7 +89,7 @@ async def parser_handler(
     _RESULT_CACHE[cache_key] = result
 
 
-@on_command("bm", priority=3, block=True).handle()
+@on_command("bm", priority=3, block=True, rule=is_enabled).handle()
 @UniHelper.with_reaction
 async def _(message: Message = CommandArg()):
     text = message.extract_plain_text()
@@ -119,7 +120,7 @@ from ..download import yt_dlp_downloader
 if yt_dlp_downloader is not None:
     from ..parsers import YouTubeParser
 
-    @on_command("ym", priority=3, block=True).handle()
+    @on_command("ym", priority=3, block=True, rule=is_enabled).handle()
     @UniHelper.with_reaction
     async def _(message: Message = CommandArg()):
         text = message.extract_plain_text()
