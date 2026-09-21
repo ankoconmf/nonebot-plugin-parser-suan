@@ -567,6 +567,36 @@
             .card.repost .author-row .avatar { width: 38px; height: 38px; }
             .card.repost .author-name { font-size: 15px; }
 
+            /* ──────── 推特引用转发: 外层卡片重排 (头像 → 简介 → 图片 → 主帖 → 统计) ──────── */
+            .card.twitter-quote > .top-row { order: 1; }
+            .card.twitter-quote > .author-row { order: 2; }
+            .card.twitter-quote > .intro { order: 3; }
+            .card.twitter-quote > .meta-row,
+            .card.twitter-quote > .title { order: 4; }
+            .card.twitter-quote > .image-container,
+            .card.twitter-quote > .image-grid,
+            .card.twitter-quote > .twitter-img-grid,
+            .card.twitter-quote > .twitter-img-aspect,
+            .card.twitter-quote > .graphics-text-card,
+            .card.twitter-quote > .graphics-item { order: 10; }
+            .card.twitter-quote > .cover-wrapper { order: 11; }
+            .card.twitter-quote > .poll { order: 12; }
+            .card.twitter-quote > .card.repost { order: 20; }
+            .card.twitter-quote > .stats-panel { order: 30; }
+            .card.twitter-quote > .footer { order: 40; }
+            /* 主帖(嵌套卡)内部重排: 头像 → 标题 → 正文 → 图片 */
+            .card.twitter-quote > .card.repost > .author-row { order: 1; }
+            .card.twitter-quote > .card.repost > .title { order: 2; }
+            .card.twitter-quote > .card.repost > .text { order: 3; }
+            .card.twitter-quote > .card.repost > .translation { order: 4; }
+            .card.twitter-quote > .card.repost > .image-container,
+            .card.twitter-quote > .card.repost > .image-grid,
+            .card.twitter-quote > .card.repost > .twitter-img-grid,
+            .card.twitter-quote > .card.repost > .twitter-img-aspect,
+            .card.twitter-quote > .card.repost > .graphics-text-card,
+            .card.twitter-quote > .card.repost > .graphics-item { order: 10; }
+            .card.twitter-quote > .card.repost > .cover-wrapper { order: 11; }
+
             /* ──────── 页脚 ──────── */
             .footer {
               display: flex;
@@ -616,7 +646,7 @@
         {% macro render_card(result, is_repost=False) %}
             {% set content_type = result.content_type %}
             {% set video = result.video %}
-            <div class="card {% if is_repost %}repost{% endif %}">
+            <div class="card {% if is_repost %}repost{% endif %}{% if not is_repost and result.repost and result.platform and result.platform.name == 'twitter' %} twitter-quote{% endif %}">
 
                 {# ── 顶栏: 解析类型胶囊 (左) + 平台 logo (右) ── #}
                 {% if not is_repost %}
