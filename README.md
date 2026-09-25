@@ -301,6 +301,9 @@ parser_browser_path=""
 # [本 fork] 浏览器兜底是否无头运行
 parser_headless=True
 
+# [本 fork] 下载失败最大重试次数(每次重试轮换备用线路, 支持断点续传)
+parser_max_retries=3
+
 ```
 
 </details>
