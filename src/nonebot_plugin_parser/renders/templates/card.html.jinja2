@@ -596,6 +596,12 @@
             .card.twitter-quote > .card.repost > .graphics-text-card,
             .card.twitter-quote > .card.repost > .graphics-item { order: 10; }
             .card.twitter-quote > .card.repost > .cover-wrapper { order: 11; }
+            /* 主帖卡片改用毛玻璃 */
+            .card.twitter-quote > .card.repost {
+              background: var(--glass);
+              backdrop-filter: blur(18px) saturate(1.4);
+              -webkit-backdrop-filter: blur(18px) saturate(1.4);
+            }
 
             /* ──────── 页脚 ──────── */
             .footer {

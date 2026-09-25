@@ -76,7 +76,12 @@ async def merge_av(
         str(output_path),
     ]
 
-    await exec_ffmpeg_cmd(cmd)
+    try:
+        await exec_ffmpeg_cmd(cmd)
+    except Exception:
+        # ffmpeg 失败时会留下半成品, 删除以免下次被当成缓存命中
+        await safe_unlink(output_path)
+        raise
     await asyncio.gather(safe_unlink(v_path), safe_unlink(a_path))
     logger.success(f"Merged {output_path.name}, {fmt_size(output_path)}")
 

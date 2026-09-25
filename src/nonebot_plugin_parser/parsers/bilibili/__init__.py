@@ -59,19 +59,35 @@ def is_pcdn_url(url: str) -> bool:
 
 def pick_clean_url(url: str, backup_url: list[str] | None) -> str:
     """主链接为 PCDN 时, 从备用链接中挑第一个干净的顶上; 否则原样返回"""
-    if not is_pcdn_url(url):
-        return url
-    for backup in backup_url or []:
-        if not is_pcdn_url(backup):
-            logger.debug(f"检测到 PCDN 链接, 已切换到备用源: {urlparse(backup).hostname}")
-            return backup
-    # 一个干净的备用链接都没有, 只能用原链接
-    logger.warning("检测到 PCDN 链接, 但无可用备用源, 下载可能失败")
-    return url
+    return order_download_urls(url, backup_url)[0]
+
+
+def order_download_urls(url: str, backup_url: list[str] | None) -> tuple[str, ...]:
+    """合并主链接与备用链接, 干净的 CDN 线路优先, PCDN 线路垫底
+
+    B 站的播放地址接口会返回一组等价线路, 单条线路 503 / 超时属于常态,
+    因此这里保留全部线路, 交给下载器失败轮换重试, 而不是只挑一条。
+    """
+    candidates = [item for item in dict.fromkeys([url, *(backup_url or [])]) if item]
+    clean = [item for item in candidates if not is_pcdn_url(item)]
+    pcdn = [item for item in candidates if is_pcdn_url(item)]
+
+    if not clean and pcdn:
+        # 一个干净的备用链接都没有, 只能用原链接
+        logger.warning("检测到 PCDN 链接, 但无可用备用源, 下载可能失败")
+    elif clean and clean[0] != url:
+        logger.debug(f"检测到 PCDN 链接, 已切换到备用源: {urlparse(clean[0]).hostname}")
+
+    return tuple([*clean, *pcdn])
 
 
 class BilibiliParser(BaseParser):
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.BILIBILI, display_name="哔哩哔哩")
+
+    BILI_RETRYABLE_HTTP_STATUSES: ClassVar[frozenset[int]] = frozenset(
+        {403, 404, 408, 425, 429, *range(500, 600)}
+    )
+    """B站 CDN 节点常见的可换线路重试状态码(限流/节点异常等)"""
 
     def __init__(self):
         self.headers = HEADERS.copy()
@@ -159,22 +175,27 @@ class BilibiliParser(BaseParser):
             output_path = pconfig.cache_dir / f"{video_info.bvid}-{page_num}.mp4"
             if output_path.exists():
                 return output_path
-            v_url, a_url = await self.extract_download_urls(video=video, page_index=page_info.index)
+            v_urls, a_urls = await self.extract_download_urls(video=video, page_index=page_info.index)
             if page_info.duration > pconfig.duration_maximum:
                 logger.warning(f"视频时长 {page_info.duration} 秒, 超过 {pconfig.duration_maximum} 秒, 取消下载")
                 raise IgnoreException
-            if a_url is not None:
+            if a_urls:
                 path = await self.downloader.download_av_and_merge(
-                    v_url,
-                    a_url,
+                    v_urls[0],
+                    a_urls[0],
                     output_path=output_path,
                     ext_headers=self.headers,
+                    video_fallback_urls=v_urls[1:],
+                    audio_fallback_urls=a_urls[1:],
+                    retry_http_statuses=self.BILI_RETRYABLE_HTTP_STATUSES,
                 )
             else:
-                path = await self.downloader._download_file(
-                    v_url,
-                    file_name=output_path.name,
+                path = await self.downloader.download_video(
+                    v_urls[0],
+                    video_name=output_path.name,
                     ext_headers=self.headers,
+                    fallback_urls=v_urls[1:],
+                    retry_http_statuses=self.BILI_RETRYABLE_HTTP_STATUSES,
                 )
             return path
 
@@ -345,8 +366,11 @@ class BilibiliParser(BaseParser):
         bvid: str | None = None,
         avid: int | None = None,
         page_index: int = 0,
-    ) -> tuple[str, str | None]:
-        """解析视频下载链接"""
+    ) -> tuple[tuple[str, ...], tuple[str, ...] | None]:
+        """解析视频下载链接
+
+        :return: (视频线路候选, 音频线路候选), 线路按优先级排序, 失败时可依次轮换
+        """
 
         from bilibili_api.video import (
             AudioStreamDownloadURL,
@@ -370,14 +394,14 @@ class BilibiliParser(BaseParser):
         if not isinstance(video_stream, VideoStreamDownloadURL):
             raise DownloadException("未找到可下载的视频流")
         logger.debug(f"视频流质量: {video_stream.video_quality.name}, 编码: {video_stream.video_codecs}")
-        video_url = pick_clean_url(video_stream.url, video_stream.backup_url)
+        video_urls = order_download_urls(video_stream.url, video_stream.backup_url)
 
         audio_stream = streams[1]
         if not isinstance(audio_stream, AudioStreamDownloadURL):
-            return video_url, None
+            return video_urls, None
         logger.debug(f"音频流质量: {audio_stream.audio_quality.name}")
-        audio_url = pick_clean_url(audio_stream.url, audio_stream.backup_url)
-        return video_url, audio_url
+        audio_urls = order_download_urls(audio_stream.url, audio_stream.backup_url)
+        return video_urls, audio_urls
 
     def _save_credential(self):
         """存储哔哩哔哩登录凭证"""

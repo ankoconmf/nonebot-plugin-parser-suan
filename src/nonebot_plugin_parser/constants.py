@@ -24,6 +24,12 @@ ANDROID_HEADER: Final[dict[str, str]] = {
     )
 }
 
+# 可通过重试或切换备用线路恢复的 HTTP 状态码
+# (限流/超时/网关错误等, 403/404 由各平台按需自行追加)
+RETRYABLE_HTTP_STATUSES: Final[frozenset[int]] = frozenset(
+    {408, 425, 429, *range(500, 600)}
+)
+
 COMMON_TIMEOUT: Final[Timeout] = Timeout(connect=15.0, read=20.0, write=10.0, pool=10.0)
 
 DOWNLOAD_TIMEOUT: Final[Timeout] = Timeout(connect=15.0, read=240.0, write=10.0, pool=10.0)

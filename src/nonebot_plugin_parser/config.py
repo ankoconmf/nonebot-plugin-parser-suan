@@ -44,6 +44,8 @@ class Config(BaseModel):
     """资源最大大小 默认 100 单位 MB"""
     parser_duration_maximum: int = 480
     """视频/音频最大时长"""
+    parser_max_retries: int = 3
+    """下载失败最大重试次数(每次重试会轮换备用下载线路, 支持断点续传)"""
     parser_append_url: bool = False
     """是否在解析结果中附加原始URL"""
     parser_disabled_platforms: list[PlatformEnum] = []
@@ -102,6 +104,11 @@ class Config(BaseModel):
     def duration_maximum(self) -> int:
         """视频/音频最大时长"""
         return self.parser_duration_maximum
+
+    @property
+    def max_retries(self) -> int:
+        """下载失败最大重试次数"""
+        return max(self.parser_max_retries, 0)
 
     @property
     def disabled_platforms(self) -> list[PlatformEnum]:
