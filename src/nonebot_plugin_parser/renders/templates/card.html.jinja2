@@ -432,6 +432,23 @@
               font-variant-numeric: tabular-nums;
               flex-shrink: 0;
             }
+            /* 图片投票: 选项配图 + 文字 + 百分比同一行 */
+            .poll-choice-with-image {
+              align-items: center;
+              font-size: 14px;
+            }
+            .poll-choice-with-image img {
+              width: 68px;
+              height: 68px;
+              object-fit: cover;
+              border-radius: 8px;
+              flex-shrink: 0;
+              border: 1px solid var(--image-outline);
+            }
+            .poll-choice-with-image .poll-label {
+              flex: 1;
+              min-width: 0;
+            }
             .poll-meta {
               display: flex;
               justify-content: space-between;
@@ -571,7 +588,6 @@
             .card.twitter-quote > .top-row { order: 1; }
             .card.twitter-quote > .author-row { order: 2; }
             .card.twitter-quote > .intro { order: 3; }
-            .card.twitter-quote > .meta-row,
             .card.twitter-quote > .title { order: 4; }
             .card.twitter-quote > .image-container,
             .card.twitter-quote > .image-grid,
@@ -580,7 +596,10 @@
             .card.twitter-quote > .graphics-text-card,
             .card.twitter-quote > .graphics-item { order: 10; }
             .card.twitter-quote > .cover-wrapper { order: 11; }
-            .card.twitter-quote > .poll { order: 12; }
+            /* meta 行(含视频时长)必须排在媒体之后: 这里是 flex order 布局,
+               放在媒体前面会让时长显示在封面上方 */
+            .card.twitter-quote > .meta-row { order: 12; }
+            .card.twitter-quote > .poll { order: 13; }
             .card.twitter-quote > .card.repost { order: 20; }
             .card.twitter-quote > .stats-panel { order: 30; }
             .card.twitter-quote > .footer { order: 40; }
@@ -675,25 +694,6 @@
                     </div>
                 {% endif %}
 
-                {# ── 封面下 meta 行；视频时长统一按 Bilibili 样式自动补齐 ── #}
-                {% set meta_items = result.extra.get('meta') or [] %}
-                {% set has_duration_meta = meta_items | selectattr('icon', 'equalto', 'clock') | list | length > 0 %}
-                {% set append_duration = video and video.duration and not has_duration_meta %}
-                {% if not is_repost and (meta_items or append_duration) %}
-                    <div class="meta-row">
-                        {% for m in meta_items %}
-                            <span class="meta-item">
-                                {% if m.get('icon') %}{{ icon(m.get('icon')) }}{% endif %}
-                                {{ m.get('text') }}
-                            </span>
-                            {% if not loop.last or append_duration %}<span class="meta-sep">·</span>{% endif %}
-                        {% endfor %}
-                        {% if append_duration %}
-                            <span class="meta-item">{{ icon('clock') }}{{ video.display_duration }}</span>
-                        {% endif %}
-                    </div>
-                {% endif %}
-
                 {# ── 图片网格 / 图文 (无视频时) ── #}
                 {% set imgs = result.all_grid_images %}
                 {% if video %}
@@ -765,6 +765,26 @@
                     {% if ns.in_text %}</div>{% endif %}
                 {% endif %}
 
+                {# ── 媒体(封面/图片)下方 meta 行；视频时长统一按 Bilibili 样式自动补齐 ── #}
+                {# 必须放在媒体块之后: 只发封面图(没有 VideoContent)时封面由图片网格渲染, 这样时长才在封面下方 ── #}
+                {% set meta_items = result.extra.get('meta') or [] %}
+                {% set has_duration_meta = meta_items | selectattr('icon', 'equalto', 'clock') | list | length > 0 %}
+                {% set append_duration = video and video.duration and not has_duration_meta %}
+                {% if not is_repost and (meta_items or append_duration) %}
+                    <div class="meta-row">
+                        {% for m in meta_items %}
+                            <span class="meta-item">
+                                {% if m.get('icon') %}{{ icon(m.get('icon')) }}{% endif %}
+                                {{ m.get('text') }}
+                            </span>
+                            {% if not loop.last or append_duration %}<span class="meta-sep">·</span>{% endif %}
+                        {% endfor %}
+                        {% if append_duration %}
+                            <span class="meta-item">{{ icon('clock') }}{{ video.display_duration }}</span>
+                        {% endif %}
+                    </div>
+                {% endif %}
+
                 {# ── 标题 (头像上方); 图文已在正文上方渲染, 此处跳过避免重复 ── #}
                 {% if result.title and not result.graphics %}<div class="title">{{ result.title }}</div>{% endif %}
 
@@ -823,14 +843,23 @@
                 {# ── 投票 (opt-in: result.extra['poll']) ── #}
                 {% set poll = result.extra.get('poll') %}
                 {% if not is_repost and poll %}
+                    {% set has_choice_image = poll.choices | selectattr('image_url') | list | length > 0 %}
                     <div class="poll">
                         {% for choice in poll.choices %}
                             <div class="poll-choice">
                                 <div class="poll-bar" style="width: {{ choice.percent }}%"></div>
-                                <div class="poll-choice-row">
-                                    <span class="poll-label">{{ choice.label }}</span>
-                                    <span class="poll-percent">{{ choice.percent }}%</span>
-                                </div>
+                                {% if choice.image_url %}
+                                    <div class="poll-choice-row poll-choice-with-image">
+                                        <img src="{{ choice.image_url | safe }}" alt="{{ choice.label }}" />
+                                        <span class="poll-label">{{ choice.label }}</span>
+                                        <span class="poll-percent">{{ choice.percent }}%</span>
+                                    </div>
+                                {% else %}
+                                    <div class="poll-choice-row">
+                                        <span class="poll-label">{{ choice.label }}</span>
+                                        <span class="poll-percent">{{ choice.percent }}%</span>
+                                    </div>
+                                {% endif %}
                             </div>
                         {% endfor %}
                         <div class="poll-meta">

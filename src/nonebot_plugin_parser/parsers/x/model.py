@@ -701,6 +701,7 @@ class FxPollChoice(Struct):
     label: str = ""
     count: int = 0
     percentage: float = 0.0
+    image_url: str = ""
 
 
 class FxPoll(Struct):
@@ -713,7 +714,12 @@ class FxPoll(Struct):
         """转换为本地投票结构"""
         return Poll(
             choices=[
-                PollChoice(label=c.label, count=c.count, percent=c.percentage)
+                PollChoice(
+                    label=c.label,
+                    count=c.count,
+                    percent=c.percentage,
+                    image_url=c.image_url,
+                )
                 for c in self.choices
             ],
             total_votes=self.total_votes,
@@ -764,7 +770,8 @@ class FxResponse(Struct):
 
 
 # ---------------------------------------------------------------------------
-# 投票 (X 投票是卡片形态: card.name 形如 'poll4choice_text_only')
+# 投票 (X 投票是卡片形态: card.name 形如 'poll4choice_text_only' /
+#       '1906814671912599552:poll_choice_images' 带选项配图)
 # ---------------------------------------------------------------------------
 
 
@@ -775,6 +782,8 @@ class PollChoice(Struct):
     """票数"""
     percent: float = 0.0
     """占比(百分比数值, 如 45.5)"""
+    image_url: str = ""
+    """选项配图 (图片投票才有)"""
 
 
 class Poll(Struct):

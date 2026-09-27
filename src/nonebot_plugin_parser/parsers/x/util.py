@@ -30,8 +30,16 @@ def _binding_values(card: TweetCard) -> dict[str, CardValue]:
 
 
 def is_poll_card(card: TweetCard | None) -> bool:
-    """是否是投票卡 (name 形如 poll4choice_text_only)"""
-    return bool(card and card.legacy and card.legacy.name.startswith("poll"))
+    """是否是投票卡
+
+    card.name 有几种形态, 且不一定以 poll 开头:
+      - 'poll4choice_text_only'        文字投票
+      - '1906814671912599552:poll_choice_images'  图片投票
+    """
+    if not card or not card.legacy:
+        return False
+    name = card.legacy.name
+    return "poll" in name.lower() and "choice" in name.lower()
 
 
 def _string_value(values: dict[str, CardValue], key: str) -> str | None:
@@ -50,6 +58,17 @@ def _int_value(values: dict[str, CardValue], key: str) -> int:
         return 0
 
 
+def _image_value(values: dict[str, CardValue], *keys: str) -> str:
+    """按给定优先级取第一个非空图片地址 (图片投票的选项配图)"""
+    for key in keys:
+        value = values.get(key)
+        image = value.image_value if value else None
+        url = image.url if image else None
+        if isinstance(url, str) and url:
+            return url
+    return ""
+
+
 def parse_poll(card: TweetCard | None) -> Poll | None:
     """解析投票卡; 非投票卡或没有选项时返回 None"""
     if not is_poll_card(card) or card is None:
@@ -63,7 +82,17 @@ def parse_poll(card: TweetCard | None) -> Poll | None:
         if label is None:
             break
         choices.append(
-            PollChoice(label=label, count=_int_value(values, f"choice{index}_count"))
+            PollChoice(
+                label=label,
+                count=_int_value(values, f"choice{index}_count"),
+                image_url=_image_value(
+                    values,
+                    f"choice{index}_image_original",
+                    f"choice{index}_image_x_large",
+                    f"choice{index}_image_large",
+                    f"choice{index}_image",
+                ),
+            )
         )
         index += 1
 
