@@ -8,7 +8,7 @@ from nonebot import logger
 
 from ..base import Platform, BaseParser, PlatformEnum, handle, pconfig
 from ..cookie import save_cookies_with_netscape
-from ..utils import fmt_stat
+from ..utils import fmt_stat, fmt_duration
 from ...download import yt_dlp_downloader
 from ...exception import ParseException
 
@@ -149,6 +149,10 @@ class YouTubeParser(BaseParser):
         extra: dict[str, Any] = {"stats": stats} if stats else {}
         if video_info.is_live:
             extra["content_type"] = "直播"
+        if video_info.duration is not None:
+            # 时长放进封面下的 meta 行: 超时长只发封面图时没有 VideoContent,
+            # 模板就不会自动补时长, 这里显式给出
+            extra["meta"] = [{"icon": "clock", "text": fmt_duration(video_info.duration)}]
 
         result = self.result(
             author=author,
