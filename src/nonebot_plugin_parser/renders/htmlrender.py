@@ -36,8 +36,8 @@ class HtmlRenderer(ImageRenderer):
     async def render_image(self) -> bytes:
         # await self.result.ensure_downloads_complete(img_only=True)
 
-        logo = resources.RESOURCES_DIR / f"{self.result.platform.name}.png"
-        logo = logo.as_uri() if logo.exists() else None
+        logo_path = resources.find_platform_logo(self.result.platform.name)
+        logo = logo_path.as_uri() if logo_path is not None else None
 
         grok_icon = resources.GROK_ICON_PATH
         grok_icon = grok_icon.as_uri() if grok_icon.exists() else None

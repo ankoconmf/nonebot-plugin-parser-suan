@@ -37,6 +37,7 @@ DOWNLOAD_TIMEOUT: Final[Timeout] = Timeout(connect=15.0, read=240.0, write=10.0,
 
 class PlatformEnum(str, Enum):
     ACFUN = "acfun"
+    APPLE_MUSIC = "apple_music"
     BILIBILI = "bilibili"
     BOOTH = "booth"
     DOUYIN = "douyin"

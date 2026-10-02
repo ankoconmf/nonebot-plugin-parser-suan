@@ -2,6 +2,7 @@
 from .nga import NGAParser as NGAParser
 from .base import BaseParser as BaseParser
 from .acfun import AcfunParser as AcfunParser
+from .apple_music import AppleMusicParser as AppleMusicParser
 from .weibo import WeiBoParser as WeiBoParser
 from .douyin import DouyinParser as DouyinParser
 from .x import TwitterParser as TwitterParser

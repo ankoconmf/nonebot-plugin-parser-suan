@@ -55,6 +55,7 @@
             [data-platform="tiktok"]      { --primary:#1c1c1e; --tint:rgba(37,244,238,0.14); --bg-glow:rgba(37,244,238,0.24); }
             [data-platform="nga"]         { --primary:#816b45; --tint:rgba(129,107,69,0.13); --bg-glow:rgba(129,107,69,0.19); }
             [data-platform="goodsmile"]   { --primary:#ff8400; --tint:rgba(255,132,0,0.14);  --bg-glow:rgba(255,132,0,0.22); }
+            [data-platform="apple_music"] { --primary:#fa243c; --tint:rgba(250,36,60,0.14);  --bg-glow:rgba(250,36,60,0.22); }
 
             [data-platform=bilibili]    { --border-start: #fb7299; }
             [data-platform=weibo]       { --border-start: #ffb400; }
@@ -67,6 +68,7 @@
             [data-platform=tiktok]      { --border-start: #fe2c55; }
             [data-platform=nga]         { --border-start: #c5ad82; }
             [data-platform=goodsmile]   { --border-start: #ffd166; }
+            [data-platform=apple_music] { --border-start: #ff9aa8; }
 
             /* ──────── 夜间主题 (YouTube 风格深灰) ──────── */
             [data-theme="dark"] {
@@ -642,6 +644,143 @@
               background: var(--primary);
               display: inline-block;
             }
+
+            /* ════════ 音频卡片分支 (content_type == "音频") ════════
+               与视频/图文/直播共用本模板, 这里只覆盖音频需要的部分:
+               封面高斯模糊铺底 + 深色文字体系 + 播放器控件。
+               任何解析器把 extra["content_type"] 设为 "音频" 即走这套。 */
+            .audio-card {
+              /* 背景是模糊封面, 文字统一取白 */
+              --ink: #ffffff;
+              --ink-soft: rgba(255, 255, 255, 0.72);
+              --ink-faint: rgba(255, 255, 255, 0.62);
+              --hair: rgba(255, 255, 255, 0.18);
+              --image-stroke: rgba(255, 255, 255, 0.22);
+              --image-outline: rgba(255, 255, 255, 0.06);
+              --glass: rgba(255, 255, 255, 0.14);
+              background: #1b1b1f;
+            }
+            /* 放大后高斯模糊的封面(边缘衰减被卡片 overflow 裁掉) */
+            .audio-card > .audio-bg {
+              position: absolute;
+              inset: -140px;
+              z-index: 0;
+              background-position: center;
+              background-size: cover;
+              background-repeat: no-repeat;
+              filter: blur(80px) saturate(190%) brightness(1.08);
+              transform: scale(1.15);
+            }
+            /* 压暗 + 微渐变, 保证白字可读, 同时保住封面的主色调 */
+            .audio-card > .audio-veil {
+              position: absolute;
+              inset: 0;
+              z-index: 0;
+              background:
+                radial-gradient(130% 92% at 50% -12%, rgba(0, 0, 0, 0.00) 0%, rgba(0, 0, 0, 0.24) 72%),
+                linear-gradient(to bottom, rgba(0, 0, 0, 0.10) 0%, rgba(0, 0, 0, 0.26) 48%, rgba(0, 0, 0, 0.54) 100%);
+            }
+            /* 播放器卡片背景恒为深色, 平台 logo 统一反白保证可读 */
+            .audio-card .platform-logo {
+              filter: brightness(0) invert(1) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+              opacity: 0.94;
+            }
+            /* 类型胶囊: 文字与图标统一取白(品牌色压在模糊封面上易糊), 底色再补一点白 */
+            .audio-card .platform-chip {
+              color: #ffffff;
+              background-color: rgba(255, 255, 255, 0.10);
+              background-image: linear-gradient(135deg, var(--tint), rgba(255, 255, 255, 0.10));
+            }
+            .audio-card .platform-chip svg { fill: #ffffff; }
+            .audio-card .artwork {
+              width: 100%;
+              border-radius: var(--radius-img);
+              overflow: hidden;
+              border: 2px solid var(--image-stroke);
+              box-shadow:
+                0 0 0 1px var(--image-outline),
+                0 12px 28px -7px rgba(0, 0, 0, 0.28),
+                0 28px 50px -20px rgba(0, 0, 0, 0.36);
+            }
+            .audio-card .artwork img {
+              width: 100%; height: auto; display: block;
+              aspect-ratio: 1 / 1; object-fit: cover;
+            }
+            .audio-card .now-head {
+              display: flex;
+              align-items: flex-start;
+              justify-content: space-between;
+              gap: 16px;
+              margin-top: 2px;
+            }
+            .audio-card .now-titles { min-width: 0; }
+            .audio-card .now-track {
+              font-size: 30px;
+              line-height: 1.28;
+              font-weight: {{ font_weight }};
+              letter-spacing: -0.01em;
+              color: var(--ink);
+              word-wrap: break-word;
+              white-space: pre-wrap;
+            }
+            .audio-card .now-subtitle {
+              margin-top: 6px;
+              font-size: 19px;
+              line-height: 1.4;
+              color: var(--ink-soft);
+            }
+            .audio-card .now-actions { display: flex; align-items: center; gap: 14px; flex-shrink: 0; padding-top: 4px; }
+            .audio-card .icon-btn {
+              width: 38px; height: 38px;
+              display: flex; align-items: center; justify-content: center;
+              border-radius: 50%;
+              background: var(--glass);
+              box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+            }
+            .audio-card .icon-btn svg { width: 20px; height: 20px; fill: rgba(255, 255, 255, 0.92); display: block; }
+            .audio-card .timeline { margin-top: 6px; }
+            .audio-card .progress-track {
+              position: relative;
+              height: 4px;
+              border-radius: 999px;
+              background: rgba(255, 255, 255, 0.26);
+            }
+            .audio-card .progress-fill {
+              position: absolute;
+              left: 0; top: 0; bottom: 0;
+              border-radius: 999px;
+              background: rgba(255, 255, 255, 0.92);
+            }
+            .audio-card .progress-thumb {
+              position: absolute;
+              top: 50%;
+              width: 15px; height: 15px;
+              margin-left: -7.5px;
+              transform: translateY(-50%);
+              border-radius: 50%;
+              background: #ffffff;
+              box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+            }
+            .audio-card .time-row {
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              margin-top: 10px;
+              font-size: 14px;
+              color: var(--ink-faint);
+              font-variant-numeric: tabular-nums;
+            }
+            .audio-card .controls {
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              gap: 54px;
+              margin-top: 14px;
+            }
+            .audio-card .controls svg { fill: rgba(255, 255, 255, 0.94); display: block; }
+            .audio-card .controls .ctl { display: flex; align-items: center; justify-content: center; }
+            .audio-card .controls .ctl-sm svg { width: 26px; height: 26px; }
+            .audio-card .controls .ctl-play svg { width: 46px; height: 46px; }
         </style>
     </head>
     <body data-platform="{{ result.platform.name if result.platform else '' | safe }}" data-theme="{{ theme | default('light', true) }}">
@@ -659,8 +798,92 @@
             {% elif name == 'share' %}<svg viewBox="0 0 24 24"><path d="M18 16.1c-.8 0-1.5.3-2 .8l-7-4a3 3 0 0 0 0-1.7l7-4c.5.5 1.2.8 2 .8a3 3 0 1 0-3-3l.1.8-7 4a3 3 0 1 0 0 4.3l7 4-.1.8a3 3 0 1 0 3-3z"/></svg>
             {% elif name == 'comment' %}<svg viewBox="0 0 24 24"><path d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2z"/></svg>
             {% elif name == 'image' %}<svg viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+            {% elif name == 'music' %}<svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
             {% elif name == 'feed' %}<svg viewBox="0 0 24 24"><path d="M6.18 15.64a2.18 2.18 0 0 1 2.18 2.18C8.36 19 7.38 20 6.18 20 5 20 4 19 4 17.82a2.18 2.18 0 0 1 2.18-2.18zM4 4.44A15.56 15.56 0 0 1 19.56 20h-2.83A12.73 12.73 0 0 0 4 7.27V4.44zm0 5.66a9.9 9.9 0 0 1 9.9 9.9h-2.83A7.07 7.07 0 0 0 4 12.93V10.1z"/></svg>
             {% endif %}
+        {% endmacro %}
+
+        {# ── 播放器图标 (音频卡片专用) ── #}
+        {% macro player_icon(name) %}
+            {% if name == 'shuffle' %}<svg viewBox="0 0 24 24"><path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
+            {% elif name == 'prev' %}<svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+            {% elif name == 'play' %}<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            {% elif name == 'next' %}<svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+            {% elif name == 'repeat' %}<svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+            {% elif name == 'star' %}<svg viewBox="0 0 24 24"><path d="M12 5.4l1.9 3.9 4.3.6-3.1 3 .7 4.2-3.8-2-3.8 2 .7-4.2-3.1-3 4.3-.6L12 5.4zm0-2.6L9 9.9 2.6 10.8l4.7 4.6-1.1 6.4L12 18.8l5.8 3 1.1-6.4 4.7-4.6L17 9.9 12 2.8z"/></svg>
+            {% elif name == 'dots' %}<svg viewBox="0 0 24 24"><path d="M6 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/></svg>
+            {% endif %}
+        {% endmacro %}
+
+        {# ── 音频卡片 (content_type == "音频"): 封面模糊铺底 + 播放器 ──
+           可选 extra: album / artist / genres / duration, 缺失时自动回退 ── #}
+        {% macro render_audio_card(result) %}
+            {% set content_type = result.content_type %}
+            {% set audio = (result.audio_contents | first) %}
+            {% set duration = (audio.duration if audio and audio.duration else result.extra.get('duration')) or 0 %}
+            {% set cover = (result.all_grid_images | first) %}
+            {% set cover_uri = (cover.uri if cover and cover.uri else fallback_pic) %}
+            {% set album = result.extra.get('album') %}
+            {% set artist = result.extra.get('artist') or (result.author.name if result.author else '') %}
+            {% set genres = result.extra.get('genres') or [] %}
+            {% set genre = genres[0] if genres else None %}
+            {% set total_seconds = duration | int %}
+            {% set total_text = ((total_seconds // 60) ~ ':' ~ ('%02d' | format(total_seconds % 60))) if total_seconds else '--:--' %}
+            <div class="card audio-card">
+                <div class="audio-bg" style="background-image: url('{{ cover_uri | safe }}');"></div>
+                <div class="audio-veil"></div>
+
+                {# ── 顶栏: 解析类型胶囊 (左) + 平台 logo (右) ── #}
+                <div class="top-row">
+                    <div class="platform-chip">
+                        <span>{{ '图文' if content_type == '动态' else content_type }}</span>
+                        {{ icon('play' if content_type == '视频' else 'music') }}
+                    </div>
+                    {% if logo %}<img class="platform-logo" src="{{ logo | safe }}" alt="{{ result.platform.display_name if result.platform else '' }}" />{% endif %}
+                </div>
+
+                {# ── 播放器: 封面 ── #}
+                <div class="artwork"><img src="{{ cover_uri | safe }}" alt="cover" /></div>
+
+                {# ── 播放器: 曲目信息 ── #}
+                <div class="now-head">
+                    <div class="now-titles">
+                        <div class="now-track">{{ result.title or '未知曲目' }}</div>
+                        <div class="now-subtitle">{{ artist }}{% if album %} — {{ album }}{% endif %}</div>
+                    </div>
+                    <div class="now-actions">
+                        <div class="icon-btn">{{ player_icon('star') }}</div>
+                        <div class="icon-btn">{{ player_icon('dots') }}</div>
+                    </div>
+                </div>
+
+                {# ── 播放器: 进度条 + 时间 ── #}
+                <div class="timeline">
+                    <div class="progress-track">
+                        <div class="progress-fill" style="width: 0%;"></div>
+                        <div class="progress-thumb" style="left: 0%;"></div>
+                    </div>
+                    <div class="time-row">
+                        <span>0:00</span>
+                        <span>-{{ total_text }}</span>
+                    </div>
+                </div>
+
+                {# ── 播放器: 控制按钮 ── #}
+                <div class="controls">
+                    <div class="ctl ctl-sm">{{ player_icon('shuffle') }}</div>
+                    <div class="ctl ctl-sm">{{ player_icon('prev') }}</div>
+                    <div class="ctl ctl-play">{{ player_icon('play') }}</div>
+                    <div class="ctl ctl-sm">{{ player_icon('next') }}</div>
+                    <div class="ctl ctl-sm">{{ player_icon('repeat') }}</div>
+                </div>
+
+                {# ── 页脚: 左侧优先显示类型, 其次来源标识/链接 ── #}
+                <div class="footer">
+                    <span class="src">{{ genre or result.extra.get('source_id') or result.url or '' }}</span>
+                    <span class="brand">{{ footer_brand }}</span>
+                </div>
+            </div>
         {% endmacro %}
 
         {# ── 翻译标签 (Grok 图标 + 源语言), 独占一行 ── #}
@@ -671,6 +894,10 @@
         {% macro render_card(result, is_repost=False) %}
             {% set content_type = result.content_type %}
             {% set video = result.video %}
+            {% if not is_repost and content_type == '音频' %}
+                {# 音频内容: 走播放器样式 (转发卡不适用) #}
+                {{ render_audio_card(result) }}
+            {% else %}
             <div class="card {% if is_repost %}repost{% endif %}{% if not is_repost and result.repost and result.platform and result.platform.name == 'twitter' %} twitter-quote{% endif %}">
 
                 {# ── 顶栏: 解析类型胶囊 (左) + 平台 logo (右) ── #}
@@ -884,6 +1111,7 @@
                     </div>
                 {% endif %}
             </div>
+            {% endif %}
         {% endmacro %}
         {{ render_card(result) }}
         {% endautoescape %}

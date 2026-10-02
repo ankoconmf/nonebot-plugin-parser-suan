@@ -71,12 +71,13 @@ def _load_fonts() -> CardFonts:
 def _load_platform_logos() -> dict[str, PILImage]:
     """平台 Logo"""
     from ...constants import PlatformEnum
+    from .. import resources
 
     logos: dict[str, PILImage] = {}
     loaded_platforms = []
     for platform_name in PlatformEnum:
-        logo_path = resources.RESOURCES_DIR / f"{platform_name}.png"
-        if logo_path.exists():
+        logo_path = resources.find_platform_logo(platform_name)
+        if logo_path is not None:
             with Image.open(logo_path) as img:
                 logos[str(platform_name)] = img.convert("RGBA")
                 loaded_platforms.append(platform_name)

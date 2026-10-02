@@ -45,6 +45,10 @@ class CommonRenderer(ImageRenderer):
     IMAGE_GRID_COLS = 3
     MAX_IMAGES_DISPLAY = 9
 
+    # 平台 Logo: 素材原始分辨率不一(有的高达上千像素), 超过上限时等比缩小
+    LOGO_MAX_HEIGHT = 30
+    LOGO_MAX_WIDTH = 240
+
     # 转发
     REPOST_PADDING = 12
     REPOST_SCALE = 0.88
@@ -213,7 +217,7 @@ class CommonRenderer(ImageRenderer):
         if self.not_repost:
             platform_name = self.result.platform.name
             if platform_name in assets.PLATFORM_LOGOS:
-                logo = assets.PLATFORM_LOGOS[platform_name]
+                logo = self._fit_logo(assets.PLATFORM_LOGOS[platform_name])
                 logo_x = self._image.width - self.PADDING - logo.width
                 logo_y = self.y_pos + (assets.AVATAR_SIZE - logo.height) // 2
                 self._image.paste(logo, (logo_x, logo_y), logo)
@@ -240,6 +244,21 @@ class CommonRenderer(ImageRenderer):
         ImageDraw.Draw(mask).ellipse((0, 0, assets.AVATAR_SIZE - 1, assets.AVATAR_SIZE - 1), fill=255)
         avatar.putalpha(mask)
         return avatar
+
+    @classmethod
+    def _fit_logo(cls, logo: PILImage) -> PILImage:
+        """Logo 按最大宽高等比缩小(不超过上限时原样返回)"""
+        ratio = min(
+            cls.LOGO_MAX_HEIGHT / logo.height,
+            cls.LOGO_MAX_WIDTH / logo.width,
+            1.0,
+        )
+        if ratio >= 1.0:
+            return logo
+        return logo.resize(
+            (max(1, round(logo.width * ratio)), max(1, round(logo.height * ratio))),
+            Image.Resampling.LANCZOS,
+        )
 
     async def _render_title(self) -> None:
         """渲染标题"""
