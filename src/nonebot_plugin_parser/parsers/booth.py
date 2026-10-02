@@ -1,6 +1,7 @@
+import json
 import re
 from html import unescape
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from httpx import AsyncClient
 from nonebot import logger
@@ -67,16 +68,20 @@ class BoothParser(BaseParser):
                 title = title_match.group(1).strip() if title_match else f"BOOTH 商品 {item_id}"
             
             # 商品描述 - 从多个可能的位置提取
-            description = ""
+            # 新版页面(2024+)：正文是 div.description 内 whitespace-pre-line 的 span，
+            # 换行是文本里真实的 \n，必须原样保留，否则简介会被压成一行
+            description = self._extract_preline_description(html)
+
+            # 旧版页面：主描述容器
+            desc_match = None
+            if not description:
+                desc_match = re.search(
+                    r'<div[^>]*js-market-item-detail-description[^>]*>(.*?)</div>',
+                    html,
+                    re.DOTALL
+                )
             
-            # 首先尝试从 js-market-item-detail-description 中提取（主要描述容器）
-            desc_match = re.search(
-                r'<div[^>]*js-market-item-detail-description[^>]*>(.*?)</div>',
-                html,
-                re.DOTALL
-            )
-            
-            if not desc_match:
+            if not description and not desc_match:
                 # 尝试从 section.deco-text 中提取
                 desc_match = re.search(
                     r'<section[^>]*deco-text[^>]*>(.*?)</section>',
@@ -84,7 +89,7 @@ class BoothParser(BaseParser):
                     re.DOTALL
                 )
             
-            if not desc_match:
+            if not description and not desc_match:
                 # 尝试从 div 的 deco-text 中提取
                 desc_match = re.search(
                     r'<div[^>]*deco-text[^>]*>(.*?)</div>',
@@ -127,11 +132,16 @@ class BoothParser(BaseParser):
                 parts = desc_html.split('\n')
                 cleaned_parts = [part.strip() for part in parts if part.strip()]
                 description = '\n'.join(cleaned_parts)
-            else:
-                # 最后尝试使用 og:description
-                og_desc_match = re.search(r'<meta property="og:description" content="([^"]*)"', html)
-                if og_desc_match:
-                    description = og_desc_match.group(1).strip()
+            elif not description:
+                # 退回结构化数据(description 字段本身带换行)，最后才是被压平的 og:description
+                product = self._extract_product_ldjson(html)
+                ld_desc = product.get("description") if product else None
+                if ld_desc:
+                    description = unescape(str(ld_desc)).strip()
+                if not description:
+                    og_desc_match = re.search(r'<meta property="og:description" content="([^"]*)"', html)
+                    if og_desc_match:
+                        description = og_desc_match.group(1).strip()
 
             # 店铺信息。渲染器只有在存在 author/header 时才会绘制平台 Logo。
             author_name = "BOOTH"
@@ -170,6 +180,9 @@ class BoothParser(BaseParser):
                 image_urls.extend(og_images)
             
 
+            # 价格：优先取 ld+json 结构化数据，其次退回页面可见的价格标签
+            price_line = self._extract_price_line(html)
+
             # 构建解析结果
             contents = []
             
@@ -177,8 +190,13 @@ class BoothParser(BaseParser):
             if image_urls:
                 contents.extend(self.create_images(image_urls))
             
-            # 创建文本内容（标题和描述）
-            result_text = description if description else ""
+            # 创建文本内容（价格 + 描述），渲染器会把它放进简介框
+            text_parts = []
+            if price_line:
+                text_parts.append(price_line)
+            if description:
+                text_parts.append(description)
+            result_text = "\n\n".join(text_parts)
             
             return self.result(
                 title=title,
@@ -193,3 +211,111 @@ class BoothParser(BaseParser):
         except Exception as e:
             logger.error(f"BoothParser 解析失败: {e}")
             raise ParseException(f"BOOTH 页面解析失败: {e}")
+
+    # 新版页面: 简介正文是 div.description 里 whitespace-pre-line 的 span(移动端多套一层 <p>)
+    _PRELINE_INTRO_RE = re.compile(
+        r'<div[^>]*class="[^"]*\bdescription\b[^"]*"[^>]*>\s*(?:<p[^>]*>\s*)?'
+        r'<span[^>]*whitespace-pre-line[^>]*>(.*?)</span>',
+        re.DOTALL | re.IGNORECASE,
+    )
+
+    @classmethod
+    def _extract_preline_description(cls, html: str) -> str:
+        """新版 BOOTH 页面的简介正文，保留原始换行；取不到返回空串"""
+        match = cls._PRELINE_INTRO_RE.search(html)
+        if not match:
+            return ""
+        return cls._html_to_text(match.group(1))
+
+    @staticmethod
+    def _html_to_text(fragment: str) -> str:
+        """把一小段 HTML 转成纯文本：保留换行、去掉首尾空白、折叠连续空行"""
+        text = re.sub(r"<br\s*/?>", "\n", fragment, flags=re.IGNORECASE)
+        text = re.sub(r"</(?:p|div|li|h[1-6]|section)\s*>", "\n", text, flags=re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", "", text)
+        text = unescape(text)
+
+        lines = [
+            line.strip(" \t\u3000")
+            for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        ]
+        cleaned: list[str] = []
+        for line in lines:
+            if not line:
+                # 丢掉开头的空行和连续空行, 只保留段落之间的一个空行
+                if not cleaned or cleaned[-1] == "":
+                    continue
+                cleaned.append("")
+            else:
+                cleaned.append(line)
+        while cleaned and cleaned[-1] == "":
+            cleaned.pop()
+        return "\n".join(cleaned)
+
+    @classmethod
+    def _extract_price_line(cls, html: str) -> str:
+        """提取商品价格并格式化为简介首行；取不到时返回空串"""
+        product = cls._extract_product_ldjson(html)
+        offers = product.get("offers") if product else None
+        if isinstance(offers, list):
+            offers = offers[0] if offers else None
+        if isinstance(offers, dict):
+            currency = str(offers.get("priceCurrency") or "")
+            price = offers.get("price")
+            if price is None:
+                # AggregateOffer(多规格商品) 只有区间价格
+                low, high = offers.get("lowPrice"), offers.get("highPrice")
+                if low is not None and high is not None:
+                    return f"价格: {cls._format_price(low, currency)} ～ {cls._format_price(high, currency)}"
+                price = low if low is not None else high
+            if price is not None:
+                formatted = cls._format_price(price, currency)
+                if formatted:
+                    return f"价格: {formatted}"
+
+        # 兜底：页面可见的价格(如 <div class="variation-price">¥ 5,500</div>)
+        visible_match = re.search(
+            r'class="[^"]*(?:variation-price|\bprice\b)[^"]*"[^>]*>\s*([^<]{1,40})<',
+            html,
+        )
+        if visible_match:
+            visible = unescape(visible_match.group(1)).strip()
+            amount_match = re.search(r"([¥￥$€])?\s*([\d][\d.,]*)", visible)
+            if amount_match:
+                symbol = amount_match.group(1) or ""
+                digits = amount_match.group(2).replace(",", "")
+                currency = {"¥": "JPY", "￥": "JPY", "$": "USD", "€": "EUR"}.get(symbol, "")
+                formatted = cls._format_price(digits, currency)
+                if formatted:
+                    return f"价格: {formatted}"
+        return ""
+
+    @staticmethod
+    def _format_price(value: Any, currency: str) -> str:
+        """把价格数值格式化成 5,500 JPY 这类可读文本"""
+        try:
+            amount = float(value)
+        except (TypeError, ValueError):
+            return f"{str(value).strip()} {currency}".strip()
+        if amount == 0:
+            return "免费"
+        amount_str = f"{amount:,.0f}" if amount == int(amount) else f"{amount:,.2f}"
+        return f"{amount_str} {currency}".strip()
+
+    @staticmethod
+    def _extract_product_ldjson(html: str) -> dict[str, Any] | None:
+        """从页面 ld+json 块中找出 @type == Product 的对象"""
+        for m in re.finditer(
+            r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>',
+            html,
+            re.DOTALL,
+        ):
+            try:
+                data = json.loads(m.group(1).strip())
+            except json.JSONDecodeError:
+                continue
+            # 可能是单对象或数组
+            for obj in data if isinstance(data, list) else [data]:
+                if isinstance(obj, dict) and obj.get("@type") == "Product":
+                    return obj
+        return None
