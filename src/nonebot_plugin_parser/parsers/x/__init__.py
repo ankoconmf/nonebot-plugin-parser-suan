@@ -14,12 +14,21 @@ X 直连失败时回退到 api.fxtwitter.com (旧的 vxtwitter 目前已 403 不
 
 from re import Match
 from uuid import uuid4
+from asyncio import sleep
 from time import monotonic
 from json import loads as json_loads
 from collections.abc import Callable
 from typing import Any, ClassVar
 
-from httpx import AsyncClient
+from httpx import (
+    AsyncClient,
+    HTTPError,
+    ConnectError,
+    ReadError,
+    ProtocolError,
+    ReadTimeout,
+    ConnectTimeout,
+)
 from msgspec import convert
 from msgspec.json import Decoder, encode
 
@@ -46,6 +55,21 @@ TRANSLATION_API: str = "https://api.x.com/2/grok/translation.json"
 
 GUEST_TOKEN_TTL: float = 2 * 60 * 60
 """游客 token 有效期(秒), 超过后重新激活"""
+
+TRANSIENT_ERRORS: tuple[type[HTTPError], ...] = (
+    ConnectError,
+    ConnectTimeout,
+    ReadTimeout,
+    ReadError,
+    ProtocolError,
+)
+"""瞬时网络错误 (连接被重置/超时等), 值得重试"""
+
+TRANSIENT_RETRY: int = 1
+"""瞬时网络错误的重试次数"""
+
+TRANSIENT_RETRY_DELAY: float = 1.0
+"""瞬时网络错误重试前的等待(秒)"""
 
 LANGUAGE_NAMES: dict[str, str] = {
     "ja": "日语",
@@ -527,12 +551,30 @@ class TwitterParser(BaseParser):
         """解析源, 按顺序尝试; X 直连失败时回退到 fxtwitter"""
         return [self._parse_by_primary, self._parse_by_fallback]
 
+    @staticmethod
+    async def _retry_transient(attempt: Callable[[], Any]) -> Any:
+        """瞬时网络错误(连接被重置/超时)重试 + 统一转成 ParseException
+
+        网络层异常必须转成 ParseException, 否则会穿透 parse_tweet 的回退逻辑,
+        直接冒泡成 matcher 失败 (表现为"发失败但再发一次就好了")。
+        """
+        for remaining in range(TRANSIENT_RETRY, -1, -1):
+            try:
+                return await attempt()
+            except TRANSIENT_ERRORS as e:
+                if remaining == 0:
+                    raise ParseException(f"网络错误: {type(e).__name__}") from e
+                logger.debug(f"X 请求瞬时失败({type(e).__name__}), {TRANSIENT_RETRY_DELAY}s 后重试")
+                await sleep(TRANSIENT_RETRY_DELAY)
+            except HTTPError as e:
+                raise ParseException(f"请求失败: {type(e).__name__}") from e
+
     async def parse_tweet(self, tweet_id: str) -> ParseResult:
         """按推文 id 解析: 主接口失败时自动回退到备用接口"""
         errors: list[str] = []
         for source in self._get_sources():
             try:
-                return await source(tweet_id)
+                return await self._retry_transient(lambda: source(tweet_id))
             except ParseException as e:
                 errors.append(str(e) or type(e).__name__)
 

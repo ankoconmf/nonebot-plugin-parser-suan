@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from html import unescape
 from typing import Any
 
 from msgspec import Struct, field
@@ -498,11 +499,11 @@ class TweetLegacy(Struct):
 
     @property
     def text(self) -> str:
-        """裁掉尾部 t.co 链接后的正文"""
+        """裁掉尾部 t.co 链接后的正文 (X 的 full_text 含 HTML 实体, 需反转义)"""
         start, end = self.display_text_range
         if end <= start:
             return ""
-        return self.full_text[start:end]
+        return unescape(self.full_text[start:end])
 
     @property
     def time_local(self) -> int | None:
@@ -560,7 +561,7 @@ class Tweet(Struct):
         note_results = self.note_tweet.note_tweet_results if self.note_tweet else None
         note_result = note_results.result if note_results else None
         if note_result and note_result.text:
-            return note_result.text
+            return unescape(note_result.text)
 
         if article_result := self.get_article_result():
             if (
