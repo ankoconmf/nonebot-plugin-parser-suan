@@ -9,17 +9,31 @@ from collections.abc import AsyncIterator
 from nonebot import logger, get_driver, on_command
 from nonebot.params import CommandArg
 from nonebot.adapters import Message
-from nonebot_plugin_alconna.uniseg import Video, Reference
+from nonebot_plugin_alconna.uniseg import Video, Reference, Image
 from nonebot_plugin_alconna.uniseg.segment import Media
+
+try:  # OneBot V11 的发送异常 (其它适配器没有这个类型)
+    from nonebot.adapters.onebot.v11.exception import ActionFailed
+except Exception:  # pragma: no cover - 未安装 onebot v11 适配器时
+
+    class ActionFailed(Exception):  # type: ignore[no-redef]
+        """占位: 未安装 OneBot V11 时不会命中"""
+
 
 from .rule import SUPER_PRIVATE, Searched, SearchResult, on_keyword_regex
 from .filter import is_enabled
 from ..utils import LimitedSizeDict
 from ..config import pconfig
 from ..helper import UniHelper, UniMessage
-from ..parsers import BaseParser, ParseResult, BilibiliParser
+from ..parsers import BaseParser, ParseResult, BilibiliParser, VideoContent
 from ..renders import get_renderer
 from ..exception import DownloadException
+
+SEND_RETRY: int = 1
+"""发送失败的重试次数"""
+
+SEND_RETRY_DELAY: float = 2.0
+"""发送失败重试前的等待(秒)"""
 
 
 def _get_enabled_parser_classes() -> list[type[BaseParser]]:
@@ -187,10 +201,92 @@ async def _serialize_send(message: UniMessage) -> AsyncIterator[None]:
                     _SEND_LOCKS[key] = (lock, current[1] - 1)
 
 
-async def _send(message: UniMessage) -> None:
-    """发送消息, 同一份媒体内容串行发送"""
+async def _send(message: UniMessage, gif_sources: dict[str, tuple[Path, Path | None]] | None = None) -> None:
+    """发送消息, 同一份媒体内容串行发送
+
+    发送失败(如 QQ 上传动图超时 retcode 1200)时重试一次; 仍失败则把其中的
+    动图降级成视频再发 —— 动图是转换出来的, 体积往往比原视频大很多。
+    """
     async with _serialize_send(message):
-        await message.send()
+        try:
+            await message.send()
+            return
+        except Exception as e:
+            # 不吞掉媒体下载失败: 交由上层清理缓存结果
+            if isinstance(e, DownloadException):
+                raise
+            logger.warning(f"发送失败({type(e).__name__}: {e}), 尝试重试")
+
+        for remaining in range(SEND_RETRY, -1, -1):
+            await asyncio.sleep(SEND_RETRY_DELAY)
+            try:
+                await message.send()
+                return
+            except Exception as e:
+                if isinstance(e, DownloadException):
+                    raise
+                if remaining == 0:
+                    logger.warning(f"重试仍失败: {type(e).__name__}: {e}")
+
+        fallback = _downgrade_gif_to_video(message, gif_sources or {})
+        if fallback is None:
+            raise
+        logger.info("动图发送失败, 降级为视频重发")
+        await fallback.send()
+
+
+def _downgrade_gif_to_video(
+    message: UniMessage,
+    gif_sources: dict[str, tuple[Path, Path | None]],
+) -> UniMessage | None:
+    """把消息里由动图转换来的图片段换回原始视频; 无可替换项时返回 None"""
+    if not gif_sources:
+        return None
+
+    segments = list(message)
+    changed = False
+    for index, seg in enumerate(segments):
+        if not isinstance(seg, Image):
+            continue
+        path = getattr(seg, "path", None)
+        if path is None:
+            continue
+        source = gif_sources.get(str(path))
+        if source is None:
+            continue
+        video_path, cover_path = source
+        segments[index] = UniHelper.video_seg(video_path, cover_path)
+        changed = True
+
+    return UniMessage(segments) if changed else None
+
+
+async def _collect_gif_sources(result: ParseResult) -> dict[str, tuple[Path, Path | None]]:
+    """收集 动图路径 -> (原始视频路径, 封面路径)
+
+    动图是本地转换出来的 (VideoContent.gif_path), 体积常比原视频大好几倍,
+    发送失败时用它换回原视频重发。
+    """
+    sources: dict[str, tuple[Path, Path | None]] = {}
+
+    async def walk(node: ParseResult | None) -> None:
+        if node is None:
+            return
+        for cont in node.contents:
+            if not isinstance(cont, VideoContent) or cont.gif_path is None:
+                continue
+            gif_file = await cont.gif_path.safe_get()
+            if gif_file is None:
+                continue
+            video_file = await cont.path_task.safe_get()
+            if video_file is None:
+                continue
+            cover_file = await cont.cover.safe_get() if cont.cover else None
+            sources[str(gif_file)] = (video_file, cover_file)
+        await walk(node.repost)
+
+    await walk(result)
+    return sources
 
 
 @UniHelper.with_reaction
@@ -205,9 +301,10 @@ async def parser_handler(
 
     # 2. 渲染内容消息并发送
     renderer = get_renderer(result.platform.name)(result)
+    gif_sources = await _collect_gif_sources(result)
     try:
         async for message in renderer.render_messages():
-            await _send(message)
+            await _send(message, gif_sources)
     except DownloadException:
         # 媒体下载失败时不留坏结果, 否则后续同链接会一直命中同一个失败的下载任务
         if _RESULT_CACHE.get(cache_key) is result:
