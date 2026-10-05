@@ -36,6 +36,10 @@ class Image(Struct):
 class User(Struct):
     nickname: str
     avatar: str
+    userId: str | None = None
+    """用户 id (用于额外请求用户主页补取粉丝数)"""
+    fans: int | str | None = None
+    """粉丝数 (笔记接口不保证提供)"""
 
 
 class InteractInfo(Struct):

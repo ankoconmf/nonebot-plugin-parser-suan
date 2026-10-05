@@ -9,6 +9,24 @@ def fmt_duration(duration: float) -> str:
     return f"{minutes}:{seconds:02d}"
 
 
+def followers_extra(count: int | str | None, label: str = "粉丝") -> dict[str, str]:
+    """粉丝(订阅)数 extra: 模板渲染在作者名下方、时间前面。
+
+    - int / 纯数字字符串按 `fmt_stat` 格式化为 万/亿
+    - 平台已格式化的文本(如 "41.6万" / "8.19K")原样使用
+    - 取不到或为 0 时返回空字典, 不渲染
+    """
+    if count is None:
+        return {}
+
+    text = fmt_stat(count)
+    if not text or text == "0":
+        return {}
+
+    # subscribers_label 决定单位文案: YouTube 用 "订阅", 其它平台用 "粉丝"
+    return {"subscribers": text, "subscribers_label": label}
+
+
 def fmt_stat(count: int | str | None) -> str:
     """格式化统计数字，超过 1 万显示为 x.x万，超过 1 亿显示为 x.x亿。"""
     try:

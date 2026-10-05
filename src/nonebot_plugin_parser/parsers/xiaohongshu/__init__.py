@@ -1,10 +1,12 @@
 import re
-from typing import ClassVar
+import json
+from typing import Any, ClassVar
 
 from httpx import Cookies, AsyncClient
 from nonebot import logger
 
 from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle, pconfig
+from ..utils import followers_extra
 
 
 _TOPIC_MARKER = re.compile(r"[ \t]*(?:【话题】|\[话题\])")
@@ -18,6 +20,29 @@ _INITIAL_STATE_TOKEN = re.compile(
 def _clean_description(text: str) -> str:
     """移除小红书简介中的话题标记, 保留话题名称本身。"""
     return _TOPIC_MARKER.sub("", text).rstrip()
+
+
+def _extract_fans_count(raw_state: str) -> str | None:
+    """从 INITIAL_STATE 的 JSON 文本里取作者粉丝数, 取不到返回 None.
+
+    H5 用户主页把作者信息放在 ``profile.userInfo``:
+    ``{"follows": "31", "fans": "240", "likeAndCollect": "2897", ...}``;
+    未登录时粉丝数是占位符 ``"-"``, 这种情况按取不到处理。
+    """
+    try:
+        data = json.loads(raw_state)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    user_info = (data.get("profile") or {}).get("userInfo") or {}
+    fans = user_info.get("fans")
+    if isinstance(fans, int):
+        return str(fans)
+    if isinstance(fans, str) and (text := fans.strip()) not in ("", "-"):
+        return text
+    return None
 
 
 class XiaoHongShuParser(BaseParser):
@@ -108,6 +133,8 @@ class XiaoHongShuParser(BaseParser):
             extra["stats"] = stats
         if region := note_detail.ip_location:
             extra["region"] = region
+        # 粉丝数, 模板渲染在作者名下方、时间前面
+        extra.update(await self._followers_extra(note_detail.user))
 
         result = self.result(
             author=author,
@@ -161,6 +188,8 @@ class XiaoHongShuParser(BaseParser):
         extra = {}
         if region := note_data.ip_location:
             extra["region"] = region
+        # 粉丝数, 模板渲染在作者名下方、时间前面
+        extra.update(await self._followers_extra(note_data.user))
 
         result = self.result(
             author=author,
@@ -197,6 +226,46 @@ class XiaoHongShuParser(BaseParser):
                 result.extra["live_photos"] = True
 
         return result
+
+    async def _followers_extra(self, user: Any) -> dict[str, str]:
+        """粉丝数 extra.
+
+        笔记接口不带粉丝数, 这里额外请求作者的用户主页 H5 页面取;
+        未登录/风控时小红书返回占位符 "-" 或跳登录页, 取不到就返回空字典(不渲染)。
+        """
+        if extra := followers_extra(user.fans):
+            return extra
+
+        if not user.userId:
+            return {}
+
+        return followers_extra(await self._fetch_follower_count(user.userId))
+
+    async def _fetch_follower_count(self, user_id: str) -> str | None:
+        """从用户主页 H5 页面的 SSR 数据里取粉丝数 (取不到返回 None)
+
+        PC 主页已经要求登录, H5 主页不需要登录态, 但必须带上 `xsec_source` 参数,
+        否则会被重定向到登录页。
+        """
+        url = f"https://www.xiaohongshu.com/user/profile/{user_id}?xsec_source=app_share"
+        try:
+            async with AsyncClient(
+                headers=self.ios_headers,
+                timeout=5,
+                follow_redirects=True,
+                cookies=Cookies(),
+                trust_env=False,
+            ) as client:
+                response = await client.get(url)
+                if response.status_code != 200:
+                    return None
+
+                raw_state = self._extract_initial_state_raw(response.text)
+        except Exception:
+            logger.debug(f"获取小红书用户 {user_id} 粉丝数失败", exc_info=True)
+            return None
+
+        return _extract_fans_count(raw_state)
 
     def _extract_initial_state_raw(self, html: str) -> str:
         pattern = r"window\.__INITIAL_STATE__=(.*?)</script>"

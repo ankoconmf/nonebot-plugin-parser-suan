@@ -2,7 +2,7 @@ import re
 import json
 import asyncio
 from re import Match
-from typing import ClassVar
+from typing import Any, ClassVar
 from urllib.parse import urlparse
 from collections.abc import AsyncGenerator
 
@@ -24,6 +24,7 @@ from ..base import (
 )
 from ..data import Platform, ImageContent, MediaContent
 from ..cookie import ck2dict
+from ..utils import followers_extra
 from .dynamic import DynamicInfo
 
 # 选择客户端
@@ -160,7 +161,8 @@ class BilibiliParser(BaseParser):
 
         from .video import VideoInfo
 
-        video = Video(bvid=bvid, aid=avid, credential=await self.credential)
+        credential = await self.credential
+        video = Video(bvid=bvid, aid=avid, credential=credential)
         video_info = convert(await video.get_info(), VideoInfo)
         # UP
         author = self.create_author(video_info.owner.name, video_info.owner.face)
@@ -205,6 +207,16 @@ class BilibiliParser(BaseParser):
             page_info.duration,
         )
 
+        extra: dict[str, Any] = {
+            "stats": video_info.stats_panel,
+            "meta": video_info.meta_line(page_info.duration),
+            "source_id": video_info.bvid,
+        }
+        # 粉丝数, 模板渲染在作者名下方、时间前面 (与视频下载并发)
+        extra.update(
+            followers_extra(await self._fetch_follower_count(video_info.owner.mid, credential))
+        )
+
         return self.result(
             url=url,
             title=page_info.title,
@@ -212,11 +224,7 @@ class BilibiliParser(BaseParser):
             text=video_info.desc,
             author=author,
             contents=[video_content],
-            extra={
-                "stats": video_info.stats_panel,
-                "meta": video_info.meta_line(page_info.duration),
-                "source_id": video_info.bvid,
-            },
+            extra=extra,
         )
 
     async def parse_dynamic_or_opus(self, dynamic_id: int):
@@ -251,9 +259,11 @@ class BilibiliParser(BaseParser):
         if dynamic_info.type == "DYNAMIC_TYPE_FORWARD" and dynamic_info.orig is not None:
             repost = await self._parse_dynamic_info(dynamic_info.orig)
 
-        extra = {"content_type": "动态"}
+        extra: dict[str, Any] = {"content_type": "动态"}
         if stats := dynamic_info.stats_panel:
             extra["stats"] = stats
+        # 粉丝数, 模板渲染在作者名下方、时间前面
+        extra.update(followers_extra(await self._fetch_follower_count(dynamic_info.mid)))
 
         return self.result(
             title=dynamic_info.title,
@@ -289,6 +299,8 @@ class BilibiliParser(BaseParser):
             author=author,
             title=opus_data.title,
             timestamp=opus_data.timestamp,
+            # 粉丝数, 模板渲染在作者名下方、时间前面
+            extra=followers_extra(await self._fetch_follower_count(opus_data.mid)),
         )
 
         for node in opus_data.extract_nodes():
@@ -305,7 +317,8 @@ class BilibiliParser(BaseParser):
 
         from .live import RoomData
 
-        room = LiveRoom(room_display_id=room_id, credential=await self.credential)
+        credential = await self.credential
+        room = LiveRoom(room_display_id=room_id, credential=credential)
         info_dict = await room.get_room_info()
 
         room_data = convert(info_dict, RoomData)
@@ -323,12 +336,19 @@ class BilibiliParser(BaseParser):
         author = self.create_author(room_data.name, room_data.avatar)
 
         url = f"https://www.bilibili.com/blackboard/live/live-activity-player.html?enterTheRoom=0&cid={room_id}"
+        # 直播类型: 顶栏胶囊显示"直播"
+        # (不设置时 ParseResult.content_type 会回退成"动态", 模板再显示成"图文")
+        extra = {"content_type": "直播"}
+        # 粉丝数, 模板渲染在作者名下方、时间前面
+        extra.update(followers_extra(await self._fetch_follower_count(room_data.uid, credential)))
+
         return self.result(
             url=url,
             title=room_data.title,
             text=room_data.detail,
             contents=contents,
             author=author,
+            extra=extra,
         )
 
     async def parse_favlist(self, fav_id: int):
@@ -357,7 +377,32 @@ class BilibiliParser(BaseParser):
             timestamp=favdata.timestamp,
             author=author,
             graphics=graphics,
+            # 粉丝数, 模板渲染在作者名下方、时间前面
+            extra=followers_extra(await self._fetch_follower_count(favdata.info.upper.mid)),
         )
+
+    async def _fetch_follower_count(
+        self,
+        mid: int | None,
+        credential: Credential | None = None,
+    ) -> int | str | None:
+        """获取 UP 主粉丝数 (取不到返回 None, 不影响解析)
+
+        :param mid: UP 主 mid
+        :param credential: 调用方已取到的凭证, 传进来可以省掉一次凭证校验请求
+        """
+        if not mid:
+            return None
+
+        from bilibili_api.user import User
+
+        try:
+            stat = await User(mid, credential or await self.credential).get_relation_info()
+        except Exception:
+            logger.debug(f"获取 B站用户 {mid} 粉丝数失败", exc_info=True)
+            return None
+
+        return stat.get("follower")
 
     async def extract_download_urls(
         self,

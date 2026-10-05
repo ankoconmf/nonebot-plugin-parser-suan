@@ -8,7 +8,7 @@ from nonebot import logger
 
 from ..base import Platform, BaseParser, PlatformEnum, handle, pconfig
 from ..cookie import save_cookies_with_netscape
-from ..utils import fmt_stat, fmt_duration
+from ..utils import fmt_stat, fmt_duration, followers_extra
 from ...download import yt_dlp_downloader
 from ...exception import ParseException
 
@@ -118,7 +118,7 @@ class YouTubeParser(BaseParser):
 
     async def parse_video(self, url: str):
         video_info = await yt_dlp_downloader.extract_video_info(url, self.cookies_file)
-        author = await self._fetch_author_info(video_info.channel_id)
+        author, subscriber_count = await self._fetch_author_info(video_info.channel_id)
 
         stats = []
         if video_info.is_upcoming:
@@ -153,6 +153,9 @@ class YouTubeParser(BaseParser):
             # 时长放进封面下的 meta 行: 超时长只发封面图时没有 VideoContent,
             # 模板就不会自动补时长, 这里显式给出
             extra["meta"] = [{"icon": "clock", "text": fmt_duration(video_info.duration)}]
+        if subscriber_count:
+            # 订阅数, 模板渲染在作者名下方、时间前面
+            extra.update(followers_extra(subscriber_count, "订阅"))
 
         result = self.result(
             author=author,
@@ -282,6 +285,7 @@ class YouTubeParser(BaseParser):
         return None
 
     async def _fetch_author_info(self, channel_id: str):
+        """获取作者信息, 同时返回频道订阅数文案 (取不到为 None)"""
         from . import meta
 
         url = "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false"
@@ -292,7 +296,8 @@ class YouTubeParser(BaseParser):
             response.raise_for_status()
 
         browse = meta.decoder.decode(response.content)
-        return self.create_author(browse.name, browse.avatar_url, browse.description)
+        author = self.create_author(browse.name, browse.avatar_url, browse.description)
+        return author, browse.subscriber_count
 
     async def _fetch_post_comment_count(self, data: dict[str, Any]) -> str | None:
         """获取帖子评论数文本, 失败静默返回 None"""

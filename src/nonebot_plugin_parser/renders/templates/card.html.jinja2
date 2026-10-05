@@ -1033,8 +1033,12 @@
                         <img src="{{ avatar_uri | safe }}" class="avatar" alt="avatar" />
                         <div class="author-meta">
                             <div class="author-name">{{ author.name }}</div>
+                            {# 名字下方一行: 粉丝/订阅数 → 发布时间 → 地区 (数量在时间前面) #}
+                            {# extra['subscribers'] + extra['subscribers_label']: 订阅(YouTube) / 粉丝(其它平台) #}
                             {% set region = result.extra.get('region') %}
-                            {% if result.formartted_datetime or region %}<div class="author-time">{{ result.formartted_datetime or '' }}{% if region %}{% if result.formartted_datetime %} · {% endif %}{{ region }}{% endif %}</div>{% endif %}
+                            {% set followers = result.extra.get('subscribers') %}
+                            {% set followers_label = result.extra.get('subscribers_label') or '粉丝' %}
+                            {% if followers or result.formartted_datetime or region %}<div class="author-time">{% if followers %}{{ followers }} {{ followers_label }}{% if result.formartted_datetime or region %} · {% endif %}{% endif %}{{ result.formartted_datetime or '' }}{% if region %}{% if result.formartted_datetime %} · {% endif %}{{ region }}{% endif %}</div>{% endif %}
                         </div>
                     </div>
                 {% endif %}

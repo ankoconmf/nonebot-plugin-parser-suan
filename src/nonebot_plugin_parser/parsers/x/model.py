@@ -138,9 +138,18 @@ class UserLegacy(Struct):
     description: str = ""
     """用户简介"""
     followers_count: int = 0
-    """粉丝数"""
+    """粉丝数 (旧接口字段, 新接口已移到 relationship_counts)"""
     profile_banner_url: str = ""
     """banner 图片"""
+
+
+class RelationshipCounts(Struct):
+    """关注/粉丝数 (新接口把 legacy.followers_count 挪到了这里)"""
+
+    followers: int = 0
+    """粉丝数"""
+    following: int = 0
+    """关注数"""
 
 
 class UserCore(Struct):
@@ -173,11 +182,17 @@ class UserData(Struct):
     """用户数字 id"""
     avatar: UserAvatar = field(default_factory=UserAvatar)
     profile_bio: UserBio | None = None
+    relationship_counts: RelationshipCounts = field(default_factory=RelationshipCounts)
 
     @property
     def avatar_url(self) -> str:
         """头像链接"""
         return self.avatar.image_url.replace("_normal", "_bigger")
+
+    @property
+    def followers_count(self) -> int:
+        """粉丝数 (新接口在 relationship_counts.followers, 旧接口在 legacy.followers_count)"""
+        return self.relationship_counts.followers or self.legacy.followers_count
 
     @property
     def description(self) -> str:
@@ -733,6 +748,8 @@ class FxAuthor(Struct):
     screen_name: str = ""
     avatar_url: str | None = None
     description: str | None = None
+    followers: int = 0
+    """粉丝数"""
 
 
 class FxTweet(Struct):

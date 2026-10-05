@@ -39,7 +39,7 @@ from .util import LinkCardData, parse_link_card, parse_poll
 from ..base import BaseParser, PlatformEnum, ParseException, handle
 from ..cookie import ck2dict
 from ..data import Platform, ParseResult
-from ..utils import fmt_stat
+from ..utils import fmt_stat, followers_extra
 from ...config import pconfig
 
 TWEET_RESULT_API: str = (
@@ -427,6 +427,8 @@ class TwitterParser(BaseParser):
                 bookmark_count=legacy.bookmark_count,
             )
             extra["source_id"] = f"@{user.core.screen_name}"
+        # 粉丝数, 模板渲染在作者名下方、时间前面 (引用/转发的推文显示原推作者)
+        extra.update(followers_extra(user.followers_count))
 
         # 投票选项的译文由翻译接口一并返回 (content_type=POLL)
         poll_choices: dict[int, str] = {}
@@ -501,6 +503,8 @@ class TwitterParser(BaseParser):
                 bookmark_count=tweet.bookmarks,
             )
             extra["source_id"] = f"@{tweet.author.screen_name}"
+        # 粉丝数 (备用接口 author.followers), 模板渲染在作者名下方
+        extra.update(followers_extra(tweet.author.followers))
 
         # 回退源没有翻译数据, 仍然用 X 的翻译接口补齐;
         # 回退响应没有 is_translatable, 只按语言粗略判断 (语言缺失时不跳过)

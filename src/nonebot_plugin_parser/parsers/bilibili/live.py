@@ -14,6 +14,8 @@ class RoomInfo(Struct):
     """分区名称"""
     parent_area_name: str
     """父分区名称"""
+    uid: int | None = None
+    """主播 uid"""
 
 
 class BaseInfo(Struct):
@@ -70,3 +72,8 @@ class RoomData(Struct):
     @property
     def avatar(self) -> str:
         return self.anchor_info.base_info.face
+
+    @property
+    def uid(self) -> int | None:
+        """主播 uid"""
+        return self.room_info.uid

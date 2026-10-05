@@ -203,6 +203,11 @@ class DynamicInfo(Struct):
         return self.modules.author_face
 
     @property
+    def mid(self) -> int:
+        """获取作者 mid"""
+        return self.modules.module_author.mid
+
+    @property
     def timestamp(self) -> int:
         """获取发布时间戳"""
         return self.modules.pub_ts

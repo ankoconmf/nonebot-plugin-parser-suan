@@ -13,6 +13,8 @@ class Author(Struct):
     nickname: str
     avatar_thumb: Avatar | None = None
     avatar_medium: Avatar | None = None
+    follower_count: int = 0
+    """粉丝数"""
 
 
 class PlayAddr(Struct):

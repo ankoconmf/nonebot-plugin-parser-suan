@@ -14,6 +14,7 @@ from ..base import (
     ParseException,
     handle,
 )
+from ..utils import followers_extra
 
 
 class DouyinParser(BaseParser):
@@ -143,6 +144,13 @@ class DouyinParser(BaseParser):
         if cover_url:
             contents.append(self.create_image(cover_url))
 
+        extra: dict[str, Any] = {"content_type": "直播"}
+        # 粉丝数, 模板渲染在作者名下方、时间前面
+        follow_info = owner.get("followInfo") or {}
+        extra.update(
+            followers_extra(follow_info.get("followerCount") or follow_info.get("followerCountStr"))
+        )
+
         return self.result(
             url=f"https://live.douyin.com/{room_id}",
             title=f"直播 - {title}" if title else "直播",
@@ -150,7 +158,7 @@ class DouyinParser(BaseParser):
             timestamp=room.get("createTime") or None,
             author=author,
             contents=contents,
-            extra={"content_type": "直播"},
+            extra=extra,
         )
 
     async def parse_video_by_browser(self, vid: str):
@@ -202,6 +210,8 @@ class DouyinParser(BaseParser):
             extra["stats"] = stats
         if meta := video_data.meta_line:
             extra["meta"] = meta
+        # 粉丝数, 模板渲染在作者名下方、时间前面
+        extra.update(followers_extra(video_data.author.follower_count))
 
         result = self.result(
             title=video_data.title,

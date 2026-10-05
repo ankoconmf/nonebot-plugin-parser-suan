@@ -40,6 +40,8 @@ class VideoInfo(Struct):
     """评论数"""
     repost_count: int | None = None
     """分享/转发数"""
+    channel_follower_count: int | None = None
+    """频道/博主粉丝数 (yt-dlp 支持时提供, 如 TikTok)"""
     live_status: str | None = None
     """直播状态 (is_live/is_upcoming/was_live/not_live)"""
     release_timestamp: int | None = None

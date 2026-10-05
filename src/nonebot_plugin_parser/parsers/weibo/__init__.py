@@ -9,6 +9,7 @@ from httpx import Cookies, AsyncClient
 from . import common, article
 from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle
 from ..data import ImageContent
+from ..utils import followers_extra
 
 
 class WeiBoParser(BaseParser):
@@ -202,6 +203,8 @@ class WeiBoParser(BaseParser):
 
         # 转发内容不显示统计面板
         extra = {} if is_repost else {"stats": data.stats_panel}
+        # 粉丝数, 模板渲染在作者名下方、时间前面 (转发卡片显示原作者粉丝数)
+        extra.update(followers_extra(data.user.followers_count))
 
         # 先以部分数据构建结果，后续再填充内容，避免使用临时变量
         result = self.result(

@@ -111,6 +111,14 @@ class OpusItem(Struct):
         return author_module.name, author_module.face
 
     @property
+    def mid(self) -> int | None:
+        """获取作者 mid"""
+        for module in self.item.modules:
+            if module.module_author:
+                return module.module_author.mid
+        return None
+
+    @property
     def timestamp(self) -> int | None:
         """获取发布时间戳"""
         for module in self.item.modules:

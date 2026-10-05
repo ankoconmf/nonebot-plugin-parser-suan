@@ -47,6 +47,8 @@ class User(Struct):
     """用户昵称"""
     profile_image_url: str
     """头像"""
+    followers_count: int | str = 0
+    """粉丝数 (接口可能已格式化为 "41.6万", 也可能是整数)"""
 
 
 class WeiboData(Struct):
