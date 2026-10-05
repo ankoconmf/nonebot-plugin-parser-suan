@@ -6,7 +6,7 @@ from httpx import AsyncClient
 from nonebot import logger
 
 from .base import BaseParser, PlatformEnum, handle
-from .data import Author, Platform
+from .data import Platform
 from .utils import fmt_stat, followers_extra
 from ..config import pconfig
 from ..download import yt_dlp_downloader
@@ -24,13 +24,8 @@ _TIKTOK_UA = (
 """TikTok 网页 UA (COMMON_HEADER 的旧 UA 会被判定为爬虫)"""
 
 
-def extract_follower_count(html: str) -> int | str | None:
-    """从 TikTok 网页 SSR 数据里取博主粉丝数, 取不到返回 None.
-
-    视频页的数据在 `webapp.video-detail.itemInfo.itemStruct`,
-    用户页在 `webapp.user-detail.userInfo`, 粉丝数在
-    `authorStats` / `stats` / `author` 之一的 `followerCount` 字段。
-    """
+def _universal_data(html: str) -> dict[str, Any] | None:
+    """解析 `__UNIVERSAL_DATA_FOR_REHYDRATION__` 里的 JSON"""
     matched = _UNIVERSAL_DATA_PATTERN.search(html)
     if matched is None:
         return None
@@ -40,28 +35,55 @@ def extract_follower_count(html: str) -> int | str | None:
     except (ValueError, TypeError):
         return None
 
-    if not isinstance(data, dict):
-        return None
+    return data if isinstance(data, dict) else None
+
+
+def extract_author_info(html: str) -> dict[str, Any]:
+    """从 TikTok 网页 SSR 数据里取作者信息, 取不到返回空字典.
+
+    视频页的数据在 `webapp.video-detail.itemInfo.itemStruct`,
+    用户页在 `webapp.user-detail.userInfo`:
+
+    - 粉丝数: `authorStats` / `stats` 的 `followerCount`
+    - 头像: 作者节点的 `avatarLarger` / `avatarMedium` / `avatarThumb`
+    """
+    data = _universal_data(html)
+    if data is None:
+        return {}
+
     scope = data.get("__DEFAULT_SCOPE__") or {}
     if not isinstance(scope, dict):
-        return None
+        return {}
 
-    for detail_key, node_keys in (
-        ("webapp.video-detail", ("itemInfo", "itemStruct")),
-        ("webapp.user-detail", ("userInfo",)),
+    video_detail = scope.get("webapp.video-detail") or {}
+    item = ((video_detail.get("itemInfo") or {}).get("itemStruct")) or {}
+    user_info = (scope.get("webapp.user-detail") or {}).get("userInfo") or {}
+    if not isinstance(item, dict):
+        item = {}
+    if not isinstance(user_info, dict):
+        user_info = {}
+
+    info: dict[str, Any] = {}
+    for holder in (
+        item.get("authorStats"),
+        item.get("stats"),
+        user_info.get("stats"),
     ):
-        node: Any = scope.get(detail_key)
-        for node_key in node_keys:
-            node = node.get(node_key) if isinstance(node, dict) else None
-        if not isinstance(node, dict):
+        if isinstance(holder, dict) and holder.get("followerCount") is not None:
+            info["follower_count"] = holder["followerCount"]
+            break
+
+    for holder in (item.get("author"), user_info.get("user"), user_info):
+        if not isinstance(holder, dict):
             continue
+        for key in ("avatarLarger", "avatarMedium", "avatarThumb"):
+            if isinstance(url := holder.get(key), str) and url:
+                info["avatar"] = url
+                break
+        if "avatar" in info:
+            break
 
-        for key in ("authorStats", "stats", "author"):
-            holder = node.get(key)
-            if isinstance(holder, dict) and holder.get("followerCount") is not None:
-                return holder["followerCount"]
-
-    return None
+    return info
 
 
 class TikTokParser(BaseParser):
@@ -97,26 +119,53 @@ class TikTokParser(BaseParser):
                 stats.append({"icon": icon, "value": fmt_stat(value), "label": label})
 
         extra: dict[str, Any] = {"stats": stats} if stats else {}
-        # yt-dlp 已提供粉丝数时直接用, 否则从网页 SSR 数据里取 (失败则跳过)
-        follower_count = video_info.channel_follower_count
-        if follower_count is None:
-            follower_count = await self._fetch_follower_count(url)
-        extra.update(followers_extra(follower_count))
+        # 作者信息 (粉丝数 / 头像): yt-dlp 都不提供, 从网页 SSR 数据里取 (失败则跳过)
+        author_info = await self._fetch_author_info(url, video_info.uploader)
+        extra.update(
+            followers_extra(author_info.get("follower_count") or video_info.channel_follower_count)
+        )
+
+        # TikTok CDN 的头像下载需要 Referer
+        self.headers["Referer"] = "https://www.tiktok.com/"
+        author = self.create_author(video_info.channel, author_info.get("avatar"))
 
         return self.result(
             title=video_info.title,
-            author=Author(name=video_info.channel),
+            author=author,
             contents=[video_content],
             timestamp=video_info.timestamp,
             extra=extra,
         )
 
-    async def _fetch_follower_count(self, url: str) -> int | str | None:
-        """获取博主粉丝数.
+    async def _fetch_author_info(self, url: str, uploader: str | None = None) -> dict[str, Any]:
+        """从网页 SSR 数据里取作者信息 (粉丝数 / 头像).
 
-        TikTok 的 user/detail 接口需要签名(msToken/X-Bogus), 这里退而解析视频页
-        HTML 里的 SSR 数据; 被风控或页面结构变化时静默返回 None, 不影响解析。
+        视频页经常被 WAF 拦(只返回 JS 挑战页), 作者主页通常能正常返回 SSR 数据,
+        所以优先用 `@用户名` 主页, 拿不到再退回视频页; 都拿不到时返回空字典,
+        不影响视频解析。TikTok 的 user/detail 接口需要签名(msToken/X-Bogus), 不用。
         """
+        handle = self._extract_handle(url) or (uploader or "").lstrip("@") or None
+
+        candidates: list[str] = []
+        if handle:
+            candidates.append(f"https://www.tiktok.com/@{handle}")
+        candidates.append(url)
+
+        for candidate in dict.fromkeys(candidates):
+            html = await self._fetch_html(candidate)
+            if html and (info := extract_author_info(html)):
+                return info
+
+        return {}
+
+    @staticmethod
+    def _extract_handle(url: str) -> str | None:
+        """从视频/主页 URL 里取 @用户名"""
+        matched = re.search(r"tiktok\.com/@([A-Za-z0-9._]+)", url)
+        return matched.group(1) if matched else None
+
+    async def _fetch_html(self, url: str) -> str | None:
+        """请求 TikTok 网页 (被风控/结构变化时返回 None)"""
         try:
             async with AsyncClient(
                 headers={"User-Agent": _TIKTOK_UA},
@@ -128,7 +177,7 @@ class TikTokParser(BaseParser):
                 response = await client.get(url)
                 if response.status_code != 200:
                     return None
-                return extract_follower_count(response.text)
+                return response.text
         except Exception:
-            logger.debug(f"获取 TikTok 粉丝数失败: {url}", exc_info=True)
+            logger.debug(f"请求 TikTok 页面失败: {url}", exc_info=True)
             return None

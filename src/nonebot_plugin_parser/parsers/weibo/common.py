@@ -55,7 +55,6 @@ class WeiboData(Struct):
     user: User
     text: str
     # source: str  # 如 微博网页版
-    # region_name: str | None = None
 
     bid: str
     created_at: str
@@ -64,6 +63,8 @@ class WeiboData(Struct):
     status_title: str | None = None
     pics: list[Pic] | None = None
     page_info: PageInfo | None = None
+    region_name: str | None = None
+    """IP 属地 (接口返回形如 发布于 河南)"""
     retweeted_status: "WeiboData | None" = None  # 转发微博
 
     attitudes_count: int = 0
@@ -85,6 +86,13 @@ class WeiboData(Struct):
     @property
     def title(self) -> str | None:
         return self.page_info.title if self.page_info else None
+
+    @property
+    def region(self) -> str | None:
+        """IP 属地 (去掉 "发布于"/"来自" 前缀, 如 "发布于 河南" -> "河南")"""
+        if not self.region_name:
+            return None
+        return sub(r"^(?:发布于|来自)\s*", "", self.region_name.strip()) or None
 
     @property
     def display_name(self) -> str:

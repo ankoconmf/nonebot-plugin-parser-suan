@@ -1,5 +1,6 @@
 import re
 import json
+from time import monotonic
 from typing import Any, ClassVar
 
 from httpx import Cookies, AsyncClient
@@ -8,6 +9,9 @@ from nonebot import logger
 from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle, pconfig
 from ..utils import followers_extra
 
+
+PROFILE_RETRY_COOLDOWN: float = 5 * 60
+"""用户主页被风控/请求失败后的冷却时间(秒), 避免连续解析反复请求触发限流"""
 
 _TOPIC_MARKER = re.compile(r"[ \t]*(?:【话题】|\[话题\])")
 _INITIAL_STATE_TOKEN = re.compile(
@@ -22,27 +26,33 @@ def _clean_description(text: str) -> str:
     return _TOPIC_MARKER.sub("", text).rstrip()
 
 
-def _extract_fans_count(raw_state: str) -> str | None:
-    """从 INITIAL_STATE 的 JSON 文本里取作者粉丝数, 取不到返回 None.
+def _extract_profile(raw_state: str) -> dict[str, str]:
+    """从 H5 用户主页的 INITIAL_STATE 里取作者信息, 取不到返回空字典.
 
     H5 用户主页把作者信息放在 ``profile.userInfo``:
-    ``{"follows": "31", "fans": "240", "likeAndCollect": "2897", ...}``;
+    ``{"follows": "31", "fans": "240", "ipLocation": "上海", ...}``;
     未登录时粉丝数是占位符 ``"-"``, 这种情况按取不到处理。
     """
     try:
         data = json.loads(raw_state)
     except (ValueError, TypeError):
-        return None
+        return {}
     if not isinstance(data, dict):
-        return None
+        return {}
 
     user_info = (data.get("profile") or {}).get("userInfo") or {}
+    profile: dict[str, str] = {}
+
     fans = user_info.get("fans")
     if isinstance(fans, int):
-        return str(fans)
-    if isinstance(fans, str) and (text := fans.strip()) not in ("", "-"):
-        return text
-    return None
+        profile["fans"] = str(fans)
+    elif isinstance(fans, str) and (text := fans.strip()) not in ("", "-"):
+        profile["fans"] = text
+
+    if isinstance(region := user_info.get("ipLocation"), str) and (text := region.strip()):
+        profile["region"] = text
+
+    return profile
 
 
 class XiaoHongShuParser(BaseParser):
@@ -70,6 +80,9 @@ class XiaoHongShuParser(BaseParser):
         if pconfig.xhs_ck:
             self.headers["cookie"] = pconfig.xhs_ck
             self.ios_headers["cookie"] = pconfig.xhs_ck
+
+        self._profile_retry_after: float = 0.0
+        """用户主页请求的冷却截止时间(monotonic 秒)"""
 
     @handle("xhslink.com", r"xhslink\.com/[A-Za-z0-9._?%&+=/#@-]+")
     @handle("xhslink.cn", r"xhslink\.cn/[A-Za-z0-9._?%&+=/#@-]+")
@@ -131,10 +144,8 @@ class XiaoHongShuParser(BaseParser):
         extra = {}
         if stats := note_detail.stats_panel:
             extra["stats"] = stats
-        if region := note_detail.ip_location:
-            extra["region"] = region
-        # 粉丝数, 模板渲染在作者名下方、时间前面
-        extra.update(await self._followers_extra(note_detail.user))
+        # 粉丝数 + IP 属地 (笔记里缺的从作者主页补), 模板渲染在作者名下方、时间前面
+        extra.update(await self._author_extra(note_detail.user, note_detail.ip_location))
 
         result = self.result(
             author=author,
@@ -186,10 +197,8 @@ class XiaoHongShuParser(BaseParser):
         author = self.create_author(note_data.user.nickName, note_data.user.avatar)
 
         extra = {}
-        if region := note_data.ip_location:
-            extra["region"] = region
-        # 粉丝数, 模板渲染在作者名下方、时间前面
-        extra.update(await self._followers_extra(note_data.user))
+        # 粉丝数 + IP 属地 (笔记里缺的从作者主页补), 模板渲染在作者名下方、时间前面
+        extra.update(await self._author_extra(note_data.user, note_data.ip_location))
 
         result = self.result(
             author=author,
@@ -227,26 +236,39 @@ class XiaoHongShuParser(BaseParser):
 
         return result
 
-    async def _followers_extra(self, user: Any) -> dict[str, str]:
-        """粉丝数 extra.
+    async def _author_extra(self, user: Any, region: str | None = None) -> dict[str, str]:
+        """作者相关 extra: 粉丝数 + IP 属地.
 
-        笔记接口不带粉丝数, 这里额外请求作者的用户主页 H5 页面取;
-        未登录/风控时小红书返回占位符 "-" 或跳登录页, 取不到就返回空字典(不渲染)。
+        `region` 是笔记自带的 IP 属地(只有 PC 笔记页面会给, H5 页面没有);
+        笔记里缺的项从作者主页补齐 —— 主页 H5 页面的 `profile.userInfo` 同时带
+        `fans` 和 `ipLocation`, 一次请求就够; 取不到的项目不写, 模板不渲染。
         """
-        if extra := followers_extra(user.fans):
+        extra: dict[str, str] = {}
+        if region:
+            extra["region"] = region
+        extra.update(followers_extra(user.fans))
+
+        # 粉丝数和属地都有, 或者拿不到 userId: 不需要再请求主页
+        if ("subscribers" in extra and region) or not user.userId:
             return extra
 
-        if not user.userId:
+        profile = await self._fetch_profile(user.userId)
+        if "subscribers" not in extra:
+            extra.update(followers_extra(profile.get("fans")))
+        if not region and (profile_region := profile.get("region")):
+            extra["region"] = profile_region
+        return extra
+
+    async def _fetch_profile(self, user_id: str) -> dict[str, str]:
+        """从用户主页 H5 页面取作者信息 (粉丝数 / IP 属地), 取不到返回空字典
+
+        PC 主页要求登录, H5 主页不需要登录态, 但必须带上 `xsec_source` 参数,
+        否则会被重定向到登录页; 撞上风控(跳验证码页)时冷却一段时间再试,
+        避免连续解析时反复请求。
+        """
+        if monotonic() < self._profile_retry_after:
             return {}
 
-        return followers_extra(await self._fetch_follower_count(user.userId))
-
-    async def _fetch_follower_count(self, user_id: str) -> str | None:
-        """从用户主页 H5 页面的 SSR 数据里取粉丝数 (取不到返回 None)
-
-        PC 主页已经要求登录, H5 主页不需要登录态, 但必须带上 `xsec_source` 参数,
-        否则会被重定向到登录页。
-        """
         url = f"https://www.xiaohongshu.com/user/profile/{user_id}?xsec_source=app_share"
         try:
             async with AsyncClient(
@@ -257,15 +279,22 @@ class XiaoHongShuParser(BaseParser):
                 trust_env=False,
             ) as client:
                 response = await client.get(url)
-                if response.status_code != 200:
-                    return None
-
-                raw_state = self._extract_initial_state_raw(response.text)
+                # 登录/验证码跳转页没有 INITIAL_STATE, 解析会抛 ParseException
+                raw_state = (
+                    self._extract_initial_state_raw(response.text)
+                    if response.status_code == 200
+                    else ""
+                )
         except Exception:
-            logger.debug(f"获取小红书用户 {user_id} 粉丝数失败", exc_info=True)
-            return None
+            logger.debug(f"获取小红书用户 {user_id} 主页信息失败", exc_info=True)
+            self._profile_retry_after = monotonic() + PROFILE_RETRY_COOLDOWN
+            return {}
 
-        return _extract_fans_count(raw_state)
+        if not raw_state:
+            self._profile_retry_after = monotonic() + PROFILE_RETRY_COOLDOWN
+            return {}
+
+        return _extract_profile(raw_state)
 
     def _extract_initial_state_raw(self, html: str) -> str:
         pattern = r"window\.__INITIAL_STATE__=(.*?)</script>"
