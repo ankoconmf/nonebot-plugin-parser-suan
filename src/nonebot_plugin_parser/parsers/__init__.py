@@ -28,6 +28,7 @@ from .data import (
     Platform,
     ParseResult,
     AudioContent,
+    CommentItem,
     ImageContent,
     VideoContent,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "AudioContent",
     "Author",
     "BaseParser",
+    "CommentItem",
     "ImageContent",
     "ParseResult",
     "Platform",

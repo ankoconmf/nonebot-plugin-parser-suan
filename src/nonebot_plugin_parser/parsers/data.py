@@ -8,7 +8,7 @@ from dataclasses import field, dataclass
 from collections.abc import Iterator, Awaitable
 
 from .task import PathTask
-from .utils import fmt_duration
+from .utils import fmt_duration, fmt_stat
 
 
 @dataclass(repr=False, slots=True)
@@ -63,6 +63,67 @@ class ImageContent(MediaContent):
 
     alt: str | None = None
     """图片描述 用于图文"""
+
+
+@dataclass(repr=False, slots=True)
+class CommentItem:
+    """评论 (卡片评论区, 由解析器放进 `extra['comments']`)
+
+    仅当渲染器支持评论区(HtmlRenderer)时才会展示; 头像走懒下载,
+    下载失败时模板回退默认头像.
+    """
+
+    name: str
+    """评论者昵称"""
+    text: str
+    """评论正文"""
+    avatar: PathTask | None = None
+    """评论者头像"""
+    images: list[PathTask] = field(default_factory=list)
+    """评论配图 (渲染在卡片评论区里)"""
+    sticker: PathTask | None = None
+    """评论大表情"""
+    image_total: int = 0
+    """该评论原有的配图数量 (用于标注没画出来的部分)"""
+    likes: int = 0
+    """点赞数"""
+    replies: int = 0
+    """回复数"""
+    location: str | None = None
+    """IP 归属地"""
+    datetime_text: str | None = None
+    """评论时间 (相对时间文本)"""
+    is_author: bool = False
+    """是否是作者本人的评论"""
+
+    async def to_view(self) -> dict[str, Any]:
+        """转成模板可直接消费的 dict (头像/配图此时才落盘, 取本地 URI)"""
+        images = [uri for task in self.images if (uri := await task.uri)]
+        sticker = await self.sticker.uri if self.sticker else None
+
+        # 没能画出来的媒体才用文字标注 (上限截断 / 下载失败)
+        media_label: str | None = None
+        if self.image_total > len(images):
+            media_label = f"图片×{self.image_total}" if self.image_total > 1 else "图片"
+        elif self.sticker is not None and sticker is None:
+            media_label = "表情"
+
+        return {
+            "name": self.name,
+            "text": self.text,
+            "avatar": await self.avatar.uri if self.avatar else None,
+            "images": images,
+            "sticker": sticker,
+            "likes": fmt_stat(self.likes) if self.likes else None,
+            "replies": fmt_stat(self.replies) if self.replies else None,
+            "location": self.location,
+            "time": self.datetime_text,
+            "media_label": media_label,
+            "is_author": self.is_author,
+        }
+
+    def __repr__(self) -> str:
+        return f"CommentItem(name={self.name}, text={self.text[:20]}, likes={self.likes})"
 
 
 @dataclass(slots=True)
@@ -221,6 +282,14 @@ class ParseResult:
         for gra in self.graphics:
             if isinstance(gra, ImageContent):
                 yield gra.path_task.get()
+
+        # 评论配图/大表情 (懒下载, 渲染在卡片评论区里)
+        for item in self.extra.get("comments") or []:
+            if isinstance(item, CommentItem):
+                if item.sticker:
+                    yield item.sticker.get()
+                for image in item.images:
+                    yield image.get()
 
         if self.repost is not None:
             yield from self.repost._iterate_download_coros(img_only)

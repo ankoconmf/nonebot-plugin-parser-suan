@@ -5,7 +5,7 @@ from apilmoji import ELK_SH_CDN, EmojiStyle
 from pydantic import BaseModel
 from bilibili_api.video import VideoCodecs, VideoQuality
 
-from .constants import RenderType, PlatformEnum
+from .constants import CommentSort, RenderType, PlatformEnum
 
 require("nonebot_plugin_localstore")
 import nonebot_plugin_localstore as _store
@@ -46,6 +46,12 @@ class Config(BaseModel):
     """视频/音频最大时长"""
     parser_max_retries: int = 3
     """下载失败最大重试次数(每次重试会轮换备用下载线路, 支持断点续传)"""
+    parser_max_comments: int = 5
+    """评论区展示条数(0 为关闭评论区, 目前仅抖音支持)"""
+    parser_max_comment_images: int = 6
+    """评论区图片(含大表情)展示上限(0 为不展示, 只保留文字标注)"""
+    parser_comment_sort: CommentSort = CommentSort.like
+    """评论区排序: like=按点赞降序, hot=抖音自己的热门顺序"""
     parser_append_url: bool = False
     """是否在解析结果中附加原始URL"""
     parser_disabled_platforms: list[PlatformEnum] = []
@@ -109,6 +115,24 @@ class Config(BaseModel):
     def max_retries(self) -> int:
         """下载失败最大重试次数"""
         return max(self.parser_max_retries, 0)
+
+    @property
+    def max_comments(self) -> int:
+        """评论区展示条数(0 为关闭)"""
+        return max(self.parser_max_comments, 0)
+
+    @property
+    def max_comment_images(self) -> int:
+        """评论区图片展示上限(0 为不展示)"""
+        return max(self.parser_max_comment_images, 0)
+
+    @property
+    def comment_sort(self) -> CommentSort:
+        """评论区排序 (配置写错时回退到点赞降序)"""
+        try:
+            return CommentSort(self.parser_comment_sort)
+        except ValueError:
+            return CommentSort.like
 
     @property
     def disabled_platforms(self) -> list[PlatformEnum]:

@@ -1,5 +1,6 @@
 from typing_extensions import override
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from nonebot import get_driver, require
 
@@ -9,6 +10,7 @@ from nonebot_plugin_htmlrender.browser import get_new_page
 
 from . import resources
 from .base import ImageRenderer, pconfig
+from ..parsers import CommentItem
 
 CHINA_TIMEZONE = timezone(timedelta(hours=8))
 
@@ -32,8 +34,36 @@ def get_footer_brand() -> str:
 class HtmlRenderer(ImageRenderer):
     """HTML 渲染器"""
 
+    async def resolve_comments(self) -> list[dict[str, Any]]:
+        """评论区: 把 extra['comments'] 的 CommentItem 转成模板可直接消费的 dict
+
+        头像在这里才落盘(懒下载), 下载失败会退化成 None, 由模板回退默认头像。
+        """
+        comments = [
+            item
+            for item in (self.result.extra.get("comments") or [])
+            if isinstance(item, CommentItem)
+        ]
+        if not comments:
+            return []
+
+        return [await item.to_view() for item in comments]
+
     @override
     async def render_image(self) -> bytes:
+        html = await self.render_html()
+
+        async with get_new_page(2, viewport={"width": 800, "height": 100}) as page:
+            await page.goto(f"file://{self.templates_dir}")
+            await page.set_content(html, wait_until="networkidle")
+            return await page.screenshot(
+                full_page=True,
+                type="png",
+                omit_background=True,
+            )
+
+    async def render_html(self) -> str:
+        """渲染卡片 HTML (出图前可单独取出来预览/校验)"""
         # await self.result.ensure_downloads_complete(img_only=True)
 
         logo_path = resources.find_platform_logo(self.result.platform.name)
@@ -45,7 +75,7 @@ class HtmlRenderer(ImageRenderer):
         font = pconfig.custom_font or resources.DEFAULT_FONT_PATH
         font = font.as_uri() if font.exists() else None
 
-        html = await template_to_html(
+        return await template_to_html(
             template_path=str(self.templates_dir),
             template_name="card.html.jinja2",
             logo=logo,
@@ -58,13 +88,5 @@ class HtmlRenderer(ImageRenderer):
             default_avatar=resources.DEFAULT_AVATAR_PATH.as_uri(),
             theme=get_auto_theme(),
             footer_brand=get_footer_brand(),
+            comments=await self.resolve_comments(),
         )
-
-        async with get_new_page(2, viewport={"width": 800, "height": 100}) as page:
-            await page.goto(f"file://{self.templates_dir}")
-            await page.set_content(html, wait_until="networkidle")
-            return await page.screenshot(
-                full_page=True,
-                type="png",
-                omit_background=True,
-            )

@@ -463,6 +463,121 @@
             /* Grok 图标是黑色透明底, 夜间主题反色 */
             [data-theme="dark"] .translation-label img { filter: invert(1); }
 
+            /* ──────── 评论区 (opt-in: result.extra['comments']) ──────── */
+            .comments {
+              display: flex;
+              flex-direction: column;
+              padding: 12px 14px 4px;
+              background: var(--glass);
+              backdrop-filter: blur(18px) saturate(1.4);
+              -webkit-backdrop-filter: blur(18px) saturate(1.4);
+              border: 1px solid var(--intro-stroke);
+              border-radius: var(--radius-panel);
+            }
+            .comments-head {
+              display: flex;
+              align-items: center;
+              gap: 7px;
+              padding: 0 2px 9px;
+              border-bottom: 1px solid var(--hair);
+              font-size: 14px;
+              font-weight: 600;
+              color: var(--ink-soft);
+            }
+            .comments-head svg { width: 16px; height: 16px; fill: var(--primary); }
+            .comments-head .comments-total {
+              margin-left: auto;
+              font-size: 12px;
+              font-weight: 400;
+              color: var(--ink-faint);
+              font-variant-numeric: tabular-nums;
+            }
+            .comment {
+              display: flex;
+              gap: 10px;
+              padding: 10px 2px;
+            }
+            .comment + .comment { border-top: 1px solid var(--hair); }
+            .comment-avatar {
+              width: 32px; height: 32px;
+              border-radius: 50%;
+              object-fit: cover;
+              flex-shrink: 0;
+              box-shadow: 0 0 0 2px var(--avatar-ring), 0 2px 6px -2px rgba(0, 0, 0, 0.25);
+            }
+            .comment-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+            .comment-top {
+              display: flex;
+              align-items: center;
+              gap: 7px;
+              font-size: 12px;
+              color: var(--ink-faint);
+              line-height: 1.3;
+            }
+            .comment-name {
+              font-size: 14px;
+              font-weight: {{ font_weight }};
+              color: var(--ink-soft);
+              max-width: 52%;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+            }
+            .comment-badge {
+              flex-shrink: 0;
+              padding: 0 5px;
+              border-radius: 6px;
+              border: 1px solid var(--primary);
+              color: var(--primary);
+              font-size: 11px;
+              line-height: 1.5;
+            }
+            .comment-loc { flex-shrink: 0; }
+            .comment-likes {
+              margin-left: auto;
+              flex-shrink: 0;
+              display: inline-flex;
+              align-items: center;
+              gap: 4px;
+              font-variant-numeric: tabular-nums;
+            }
+            .comment-likes svg { width: 13px; height: 13px; fill: var(--primary); }
+            .comment-text {
+              font-size: 15px;
+              color: var(--ink-soft);
+              line-height: 1.6;
+              white-space: pre-wrap;
+              word-wrap: break-word;
+            }
+            .comment-media { color: var(--ink-faint); }
+            /* 评论配图/大表情: 贴在评论正文下方, 等比缩放到框内 */
+            .comment-media-row {
+              display: flex;
+              flex-wrap: wrap;
+              align-items: flex-start;
+              gap: 8px;
+              margin-top: 2px;
+            }
+            .comment-image {
+              max-width: 168px;
+              max-height: 168px;
+              border-radius: 10px;
+              border: 1px solid var(--image-outline);
+              box-shadow: 0 2px 8px -4px rgba(0, 0, 0, 0.35);
+            }
+            .comment-sticker {
+              max-width: 108px;
+              max-height: 108px;
+              border-radius: 6px;
+            }
+            .comment-sub {
+              display: flex;
+              gap: 10px;
+              font-size: 12px;
+              color: var(--ink-faint);
+              font-variant-numeric: tabular-nums;
+            }
+
             /* ──────── 图片网格 ──────── */
             .image-container {
               width: 100%;
@@ -604,6 +719,7 @@
             .card.twitter-quote > .poll { order: 13; }
             .card.twitter-quote > .card.repost { order: 20; }
             .card.twitter-quote > .stats-panel { order: 30; }
+            .card.twitter-quote > .comments { order: 35; }
             .card.twitter-quote > .footer { order: 40; }
             /* 主帖(嵌套卡)内部重排: 头像 → 标题 → 正文 → 图片 */
             .card.twitter-quote > .card.repost > .author-row { order: 1; }
@@ -1101,6 +1217,43 @@
                                 <span>截止 {{ poll.ends_at_local }}</span>
                             {% endif %}
                         </div>
+                    </div>
+                {% endif %}
+
+                {# ── 评论区 (opt-in: extra['comments'], 由 HtmlRenderer 解析成 dict) ── #}
+                {% if not is_repost and comments %}
+                    <div class="comments">
+                        <div class="comments-head">
+                            {{ icon('comment') }}
+                            <span>热门评论</span>
+                            {% if result.extra.get('comments_total') %}<span class="comments-total">共 {{ result.extra.get('comments_total') }} 条</span>{% endif %}
+                        </div>
+                        {% for c in comments %}
+                            <div class="comment">
+                                <img class="comment-avatar" src="{{ c.avatar or default_avatar }}" alt="avatar" />
+                                <div class="comment-main">
+                                    <div class="comment-top">
+                                        <span class="comment-name">{{ c.name }}</span>
+                                        {% if c.is_author %}<span class="comment-badge">作者</span>{% endif %}
+                                        {% if c.location %}<span class="comment-loc">{{ c.location }}</span>{% endif %}
+                                        {% if c.likes %}<span class="comment-likes">{{ icon('like') }}{{ c.likes }}</span>{% endif %}
+                                    </div>
+                                    <div class="comment-text">{{ c.text }}{% if c.media_label %}<span class="comment-media">[{{ c.media_label }}]</span>{% endif %}</div>
+                                    {% if c.images or c.sticker %}
+                                        <div class="comment-media-row">
+                                            {% for image in c.images %}<img class="comment-image" src="{{ image }}" alt="评论图片" />{% endfor %}
+                                            {% if c.sticker %}<img class="comment-sticker" src="{{ c.sticker }}" alt="评论表情" />{% endif %}
+                                        </div>
+                                    {% endif %}
+                                    {% if c.time or c.replies %}
+                                        <div class="comment-sub">
+                                            {% if c.time %}<span>{{ c.time }}</span>{% endif %}
+                                            {% if c.replies %}<span>{{ c.replies }} 条回复</span>{% endif %}
+                                        </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        {% endfor %}
                     </div>
                 {% endif %}
 

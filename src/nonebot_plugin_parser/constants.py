@@ -64,3 +64,15 @@ class RenderType(str, Enum):
     common = "common"
     htmlkit = "htmlkit"
     htmlrender = "htmlrender"
+
+
+class CommentSort(str, Enum):
+    """评论区的排序方式"""
+
+    like = "like"
+    """按点赞数降序 (点赞相同则保持接口原序)"""
+    hot = "hot"
+    """抖音自己的热门顺序 (热度 + 兴趣评论混排, 不按点赞)"""
+
+    def __str__(self) -> str:
+        return self.value
