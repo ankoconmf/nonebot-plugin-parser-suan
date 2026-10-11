@@ -326,6 +326,7 @@ parser_max_retries=3
 |    bm    |           -           |  否   | 群聊 |   下载 B 站音频   |
 |    ym    |           -           |  否   | 群聊 | 下载 youtube 音频 |
 |  blogin  |       SUPERUSER       |  否   | 私聊 | 扫码获取 B 站凭证 |
+|  bh搜索  |           -           |  否   | 群聊 | 按商品 ID 解析 BOOTH 作品, 例: bh搜索8149939 |
 
 ## 🧩 扩展
 

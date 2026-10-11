@@ -25,9 +25,9 @@ from .filter import is_enabled
 from ..utils import LimitedSizeDict
 from ..config import pconfig
 from ..helper import UniHelper, UniMessage
-from ..parsers import BaseParser, ParseResult, BilibiliParser, VideoContent
+from ..parsers import BaseParser, ParseResult, BilibiliParser, BoothParser, VideoContent
 from ..renders import get_renderer
-from ..exception import DownloadException
+from ..exception import DownloadException, ParseException
 
 SEND_RETRY: int = 1
 """发送失败的重试次数"""
@@ -289,11 +289,8 @@ async def _collect_gif_sources(result: ParseResult) -> dict[str, tuple[Path, Pat
     return sources
 
 
-@UniHelper.with_reaction
-async def parser_handler(
-    sr: SearchResult = Searched(),
-):
-    """统一的解析处理器"""
+async def render_parsed(sr: SearchResult) -> None:
+    """解析 + 渲染 + 发送, 与链接解析共用同一份缓存/在途任务"""
     cache_key = sr.text
 
     # 1. 获取(或等待其他人正在进行的)解析结果
@@ -310,6 +307,14 @@ async def parser_handler(
         if _RESULT_CACHE.get(cache_key) is result:
             _RESULT_CACHE.pop(cache_key, None)
         raise
+
+
+@UniHelper.with_reaction
+async def parser_handler(
+    sr: SearchResult = Searched(),
+):
+    """统一的解析处理器"""
+    await render_parsed(sr)
 
 
 @on_command("bm", priority=3, block=True, rule=is_enabled).handle()
@@ -363,6 +368,35 @@ if yt_dlp_downloader is not None:
 
         if pconfig.need_upload:
             await _send(UniMessage(UniHelper.file_seg(audio_path)))
+
+
+@on_command("bh搜索", priority=3, block=True, rule=is_enabled).handle()
+@UniHelper.with_reaction
+async def _(message: Message = CommandArg()):
+    """按商品 ID 直接解析 BOOTH 作品, 例: bh搜索8149939"""
+    text = message.extract_plain_text().strip()
+
+    if "booth.pm" in text:
+        # 也允许直接贴链接: bh搜索https://xxx.booth.pm/items/8149939
+        url = text
+    else:
+        item_id = re.search(r"\d+", text)
+        if not item_id:
+            await UniMessage("用法: bh搜索<商品ID>, 例如 bh搜索8149939").finish()
+        url = f"https://booth.pm/ja/items/{item_id.group(0)}"
+
+    try:
+        parser = get_parser_by_type(BoothParser)
+    except ValueError:
+        await UniMessage("BOOTH 解析未启用").finish()
+
+    try:
+        keyword, searched = parser.search_url(url)
+    except ParseException:
+        await UniMessage(f"无法从 {url} 中解析出作品 ID").finish()
+
+    # 与直接发链接走同一套缓存/渲染/发送流程
+    await render_parsed(SearchResult(text=url, keyword=keyword, searched=searched))
 
 
 @on_command("blogin", block=True, permission=SUPER_PRIVATE).handle()
