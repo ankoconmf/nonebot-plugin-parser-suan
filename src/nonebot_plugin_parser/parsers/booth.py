@@ -61,11 +61,11 @@ class BoothParser(BaseParser):
             title = None
             og_title_match = re.search(r'<meta property="og:title" content="([^"]*)"', html)
             if og_title_match:
-                title = og_title_match.group(1).strip()
+                title = unescape(og_title_match.group(1)).strip()
             
             if not title:
                 title_match = re.search(r'<title>([^<]+)</title>', html)
-                title = title_match.group(1).strip() if title_match else f"BOOTH 商品 {item_id}"
+                title = unescape(title_match.group(1)).strip() if title_match else f"BOOTH 商品 {item_id}"
             
             # 商品描述 - 从多个可能的位置提取
             # 新版页面(2024+)：正文是 div.description 内 whitespace-pre-line 的 span，
