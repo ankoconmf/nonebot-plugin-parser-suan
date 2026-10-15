@@ -50,9 +50,7 @@ class User(Struct):
     nickName: str
     avatar: str
     userId: str | None = None
-    """用户 id (用于额外请求用户主页补取粉丝数)"""
-    fans: int | str | None = None
-    """粉丝数 (笔记接口不保证提供)"""
+    """用户 id"""
 
 
 class NoteData(Struct):
@@ -67,8 +65,6 @@ class NoteData(Struct):
     imageList: list[Image] = []  # url 带水印，下载时使用 download_url
     video: Video | None = None
     interactInfo: InteractInfo | None = None
-    ipLocation: str | None = None
-    """发布地区 (IP 属地)"""
 
     @property
     def timestamp(self) -> int | None:
@@ -80,11 +76,6 @@ class NoteData(Struct):
     def stats_panel(self) -> list[dict[str, str]]:
         """卡片底部互动数据面板 (点赞/收藏/评论/分享)"""
         return self.interactInfo.stats_panel if self.interactInfo else []
-
-    @property
-    def ip_location(self) -> str | None:
-        """发布地区 (IP 属地), 去除前后空白"""
-        return self.ipLocation.strip() if self.ipLocation else None
 
     @property
     def image_urls(self) -> list[str]:
