@@ -22,6 +22,12 @@ class Config(BaseModel):
     """youtube cookies"""
     parser_xhs_ck: str | None = None
     """小红书 cookies"""
+    parser_xhs_share_first: bool | None = None
+    """小红书是否优先使用 QQ 内置浏览器 UA 请求分享页(无需登录态)
+
+    留空为自动: 未配置 parser_xhs_ck 时优先走分享页, 配置了则沿用 cookies/PC 页面;
+    True 一律优先分享页; False 分享页只作为最后兜底
+    """
     parser_pixiv_ck: str | None = None
     """pixiv cookies(PHPSESSID 等), 用于解析 R18 作品"""
     parser_pixiv_refresh_token: str | None = None
@@ -168,6 +174,11 @@ class Config(BaseModel):
     def xhs_ck(self) -> str | None:
         """小红书 cookies"""
         return self.parser_xhs_ck
+
+    @property
+    def xhs_share_first(self) -> bool | None:
+        """小红书是否优先使用 QQ 分享页 (None 为自动)"""
+        return self.parser_xhs_share_first
 
     @property
     def pixiv_ck(self) -> str | None:

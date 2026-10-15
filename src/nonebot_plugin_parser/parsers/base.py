@@ -10,7 +10,7 @@ from .data import Platform, ParseResult, ImageContent, ParseResultKwargs
 from .task import PathTask
 from ..config import pconfig as pconfig
 from ..download import downloader
-from ..constants import IOS_HEADER, COMMON_HEADER, ANDROID_HEADER, COMMON_TIMEOUT
+from ..constants import IOS_HEADER, COMMON_HEADER, ANDROID_HEADER, QQ_HEADER, COMMON_TIMEOUT
 from ..constants import DOWNLOAD_TIMEOUT as DOWNLOAD_TIMEOUT
 from ..constants import PlatformEnum as PlatformEnum
 from ..exception import ParseException
@@ -55,6 +55,8 @@ class BaseParser:
         self.headers = COMMON_HEADER.copy()
         self.ios_headers = IOS_HEADER.copy()
         self.android_headers = ANDROID_HEADER.copy()
+        self.qq_headers = QQ_HEADER.copy()
+        """QQ 内置浏览器 UA, 用于请求分享落地页(免登录态)"""
         self.timeout = COMMON_TIMEOUT
 
     def __init_subclass__(cls, **kwargs):

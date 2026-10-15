@@ -1,8 +1,7 @@
 from msgspec import Struct, field
 from msgspec.json import Decoder
 
-from .common import Video
-from ..utils import fmt_stat
+from .common import InteractInfo, Video
 
 
 class StreamItem(Struct):
@@ -42,19 +41,6 @@ class User(Struct):
     """粉丝数 (笔记接口不保证提供)"""
 
 
-class InteractInfo(Struct):
-    """互动数据 (小红书返回的是字符串)"""
-
-    likedCount: str = "0"
-    """点赞"""
-    collectedCount: str = "0"
-    """收藏"""
-    commentCount: str = "0"
-    """评论"""
-    shareCount: str = "0"
-    """分享"""
-
-
 class NoteDetail(Struct):
     type: str
     title: str
@@ -84,14 +70,7 @@ class NoteDetail(Struct):
     @property
     def stats_panel(self) -> list[dict[str, str]]:
         """卡片底部互动数据面板 (点赞/收藏/评论/分享)"""
-        if self.interactInfo is None:
-            return []
-        return [
-            {"icon": "like", "value": fmt_stat(self.interactInfo.likedCount), "label": "点赞"},
-            {"icon": "star", "value": fmt_stat(self.interactInfo.collectedCount), "label": "收藏"},
-            {"icon": "comment", "value": fmt_stat(self.interactInfo.commentCount), "label": "评论"},
-            {"icon": "share", "value": fmt_stat(self.interactInfo.shareCount), "label": "分享"},
-        ]
+        return self.interactInfo.stats_panel if self.interactInfo else []
 
     @property
     def nickname(self) -> str:

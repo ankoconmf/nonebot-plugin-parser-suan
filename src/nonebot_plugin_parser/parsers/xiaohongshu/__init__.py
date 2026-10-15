@@ -4,6 +4,7 @@ from time import monotonic
 from typing import Any, ClassVar
 
 from httpx import Cookies, AsyncClient
+from msgspec import DecodeError, ValidationError
 from nonebot import logger
 
 from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle, pconfig
@@ -19,6 +20,8 @@ _INITIAL_STATE_TOKEN = re.compile(
     r'|(?P<undefined>\bundefined\b)'
     r'|\bnew\s+Map\s*\(\s*\[\s*\]\s*\)'
 )
+_XSEC_TOKEN = re.compile(r"[?&]xsec_token=(?P<token>[^&\s]+)")
+"""笔记链接里的分享令牌: 分享页必须携带, 缺失时会被重定向到登录/失效页"""
 
 
 def _clean_description(text: str) -> str:
@@ -88,7 +91,8 @@ class XiaoHongShuParser(BaseParser):
     @handle("xhslink.cn", r"xhslink\.cn/[A-Za-z0-9._?%&+=/#@-]+")
     async def _parse_short_link(self, searched: re.Match[str]):
         url = f"https://{searched.group(0)}"
-        return await self.parse_with_redirect(url, self.ios_headers)
+        # 短链跳转同样用 QQ UA, 落地页才会是分享页而不是登录页
+        return await self.parse_with_redirect(url, self.qq_headers)
 
     # https://www.xiaohongshu.com/explore/68feefe40000000007030c4a?xsec_token=ABjAKjfMHJ7ck4UjPlugzVqMb35utHMRe_vrgGJ2AwJnc=&xsec_source=pc_feed
     # https://www.xiaohongshu.com/discovery/item/68e8e3fa00000000030342ec?app_platform=android&ignoreEngage=true&app_version=9.6.0&share_from_user_hidden=true&xsec_source=app_share&type=normal&xsec_token=CBW9rwIV2qhcCD-JsQAOSHd2tTW9jXAtzqlgVXp6c52Sw%3D&author_share=1&xhsshare=QQ&shareRedId=ODs3RUk5ND42NzUyOTgwNjY3OTo8S0tK&apptime=1761372823&share_id=3b61945239ac403db86bea84a4f15124&share_channel=qq
@@ -97,6 +101,22 @@ class XiaoHongShuParser(BaseParser):
         xhs_domain = "https://www.xiaohongshu.com"
         query, xhs_id = searched.group("query", "xhs_id")
         explore_url = f"{xhs_domain}/explore/{query}"
+
+        # 分享页路径: QQ 内置浏览器 UA + discovery 分享页, 不需要登录态也不消耗 cookie
+        # (见 parse_share)。链接里没有 xsec_token 时分享页会跳到登录/失效页, 直接跳过。
+        token_matched = _XSEC_TOKEN.search(query)
+        xsec_token = token_matched.group("token") if token_matched else None
+        share_first = pconfig.xhs_share_first
+        if share_first is None:
+            # 自动: 未配置 cookie 时分享页是最省请求也最抗风控的路径, 配了则尊重原有链路
+            share_first = pconfig.xhs_ck is None
+        next_step = "parse_share" if xsec_token and not share_first else "parse_discovery"
+
+        if xsec_token and share_first:
+            try:
+                return await self.parse_share(xhs_id, xsec_token)
+            except Exception as e:
+                logger.warning(f"parse_share (小红书分享页) failed, error: {e}, fallback to parse_explore")
 
         try:
             return await self.parse_explore(explore_url, xhs_id)
@@ -108,10 +128,16 @@ class XiaoHongShuParser(BaseParser):
                     return await self.parse_explore(explore_url, xhs_id, headers=anonymous_headers)
                 except Exception as anonymous_error:
                     logger.warning(
-                        f"parse_explore without cookie failed, error: {anonymous_error}, fallback to parse_discovery"
+                        f"parse_explore without cookie failed, error: {anonymous_error}, fallback to {next_step}"
                     )
             else:
-                logger.warning(f"parse_explore failed, error: {e}, fallback to parse_discovery")
+                logger.warning(f"parse_explore failed, error: {e}, fallback to {next_step}")
+
+        if xsec_token and not share_first:
+            try:
+                return await self.parse_share(xhs_id, xsec_token)
+            except Exception as e:
+                logger.warning(f"parse_share (小红书分享页) failed, error: {e}, fallback to parse_discovery")
 
         return await self.parse_discovery(f"{xhs_domain}/discovery/item/{query}")
 
@@ -174,29 +200,38 @@ class XiaoHongShuParser(BaseParser):
 
         return result
 
-    async def parse_discovery(self, url: str):
+    async def parse_share(self, xhs_id: str, xsec_token: str):
+        """QQ 内置浏览器 UA 请求分享页 (无需登录态 / cookie)
+
+        小红书对"在 QQ 里点开分享链接"的落地页放行, 返回带完整 __INITIAL_STATE__
+        的 HTML, 因此既不需要 cookie 也不容易被拦成验证码页。
+        """
+        url = (
+            f"https://www.xiaohongshu.com/discovery/item/{xhs_id}"
+            # token 可能已经是百分号编码的, 原样拼接避免二次编码
+            f"?xsec_token={xsec_token}&xsec_source=pc_share"
+        )
+        return await self.parse_discovery(url, headers=self.qq_headers)
+
+    async def parse_discovery(self, url: str, headers: dict[str, str] | None = None):
         from . import discovery
 
-        async with AsyncClient(
-            headers=self.ios_headers,
-            timeout=self.timeout,
-            follow_redirects=True,
-            cookies=Cookies(),
-            trust_env=False,
-        ) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            html = response.text
-
+        html = await self._fetch_html(url, self.ios_headers if headers is None else headers)
         raw = self._extract_initial_state_raw(html)
-        init_state = discovery.decoder.decode(raw)
-        note_data = init_state.noteData.data.noteData
+        try:
+            init_state = discovery.decoder.decode(raw)
+            note_data = init_state.noteData.data.noteData
+        except (DecodeError, ValidationError) as e:
+            # 失效/被删的笔记会被 302 到 404 提示页, 结构里没有 noteData
+            raise ParseException("小红书分享链接失效或内容已删除") from e
         preload_data = init_state.noteData.normalNotePreloadData
         video_info = note_data.url_and_duration if note_data.is_video else None
 
         author = self.create_author(note_data.user.nickName, note_data.user.avatar)
 
         extra = {}
+        if stats := note_data.stats_panel:
+            extra["stats"] = stats
         # 粉丝数 + IP 属地 (笔记里缺的从作者主页补), 模板渲染在作者名下方、时间前面
         extra.update(await self._author_extra(note_data.user, note_data.ip_location))
 
@@ -235,6 +270,19 @@ class XiaoHongShuParser(BaseParser):
                 result.extra["live_photos"] = True
 
         return result
+
+    async def _fetch_html(self, url: str, headers: dict[str, str]) -> str:
+        """请求笔记页面 HTML (独立 cookie jar, 不读环境代理)"""
+        async with AsyncClient(
+            headers=headers,
+            timeout=self.timeout,
+            follow_redirects=True,
+            cookies=Cookies(),
+            trust_env=False,
+        ) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.text
 
     async def _author_extra(self, user: Any, region: str | None = None) -> dict[str, str]:
         """作者相关 extra: 粉丝数 + IP 属地.

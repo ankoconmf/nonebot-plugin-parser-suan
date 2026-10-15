@@ -3,7 +3,7 @@ from urllib.parse import quote
 from msgspec import Struct, field
 from msgspec.json import Decoder
 
-from .common import Video
+from .common import InteractInfo, Video
 
 
 class StreamItem(Struct):
@@ -66,6 +66,7 @@ class NoteData(Struct):
     """发布时间戳, 毫秒"""
     imageList: list[Image] = []  # url 带水印，下载时使用 download_url
     video: Video | None = None
+    interactInfo: InteractInfo | None = None
     ipLocation: str | None = None
     """发布地区 (IP 属地)"""
 
@@ -74,6 +75,11 @@ class NoteData(Struct):
         """发布时间戳, 秒 (优先发布时间, 缺失时回退到最后更新时间)"""
         ts = self.time if self.time is not None else self.lastUpdateTime
         return ts // 1000 if ts is not None else None
+
+    @property
+    def stats_panel(self) -> list[dict[str, str]]:
+        """卡片底部互动数据面板 (点赞/收藏/评论/分享)"""
+        return self.interactInfo.stats_panel if self.interactInfo else []
 
     @property
     def ip_location(self) -> str | None:

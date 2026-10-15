@@ -1,5 +1,30 @@
 from msgspec import Struct, field
 
+from ..utils import fmt_stat
+
+
+class InteractInfo(Struct):
+    """互动数据 (小红书返回的是字符串)"""
+
+    likedCount: str = "0"
+    """点赞"""
+    collectedCount: str = "0"
+    """收藏"""
+    commentCount: str = "0"
+    """评论"""
+    shareCount: str = "0"
+    """分享"""
+
+    @property
+    def stats_panel(self) -> list[dict[str, str]]:
+        """卡片底部互动数据面板 (点赞/收藏/评论/分享)"""
+        return [
+            {"icon": "like", "value": fmt_stat(self.likedCount), "label": "点赞"},
+            {"icon": "star", "value": fmt_stat(self.collectedCount), "label": "收藏"},
+            {"icon": "comment", "value": fmt_stat(self.commentCount), "label": "评论"},
+            {"icon": "share", "value": fmt_stat(self.shareCount), "label": "分享"},
+        ]
+
 
 class StreamItem(Struct):
     masterUrl: str
