@@ -1,5 +1,6 @@
 import re
 import json
+from asyncio import sleep
 from time import monotonic
 from typing import Any, ClassVar
 
@@ -14,6 +15,12 @@ from ..utils import followers_extra
 PROFILE_RETRY_COOLDOWN: float = 5 * 60
 """用户主页被风控/请求失败后的冷却时间(秒), 避免连续解析反复请求触发限流"""
 
+SHARE_RETRY_TIMES: int = 2
+"""分享页最多请求次数: 风控会间歇性返回验证码页, 隔一会儿重试通常就能拿到数据"""
+
+SHARE_RETRY_DELAY: float = 1.0
+"""分享页重试间隔(秒), 第 n 次重试等待 n 倍"""
+
 _TOPIC_MARKER = re.compile(r"[ \t]*(?:【话题】|\[话题\])")
 _INITIAL_STATE_TOKEN = re.compile(
     r'(?P<string>"(?:[^"\\]|\\.)*")'
@@ -21,7 +28,7 @@ _INITIAL_STATE_TOKEN = re.compile(
     r'|\bnew\s+Map\s*\(\s*\[\s*\]\s*\)'
 )
 _XSEC_TOKEN = re.compile(r"[?&]xsec_token=(?P<token>[^&\s]+)")
-"""笔记链接里的分享令牌: 分享页必须携带, 缺失时会被重定向到登录/失效页"""
+"""笔记链接里的分享令牌: 分享页必须携带, 缺失时页面里没有笔记数据"""
 
 
 def _clean_description(text: str) -> str:
@@ -59,27 +66,20 @@ def _extract_profile(raw_state: str) -> dict[str, str]:
 
 
 class XiaoHongShuParser(BaseParser):
+    """小红书解析
+
+    唯一可用路径是「QQ 内置浏览器 UA + H5 分享页」(见 ``parse_share``):
+    PC 的 ``explore`` 页面和 iPhone UA 请求的 H5 页面实测都取不到笔记数据
+    (页面里没有该笔记, 或被 302 到登录/验证码页), 因此不再保留这些兜底路径,
+    改为在唯一路径上重试, 应对间歇性的验证码页风控。
+    """
+
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.XIAOHONGSHU, display_name="小红书")
 
     def __init__(self):
         super().__init__()
-        explore_headers = {
-            "accept": (
-                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
-                "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
-            )
-        }
-        self.headers.update(explore_headers)
-
-        discovery_headers = {
-            "origin": "https://www.xiaohongshu.com",
-            "x-requested-with": "XMLHttpRequest",
-            "sec-fetch-site": "same-origin",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-dest": "empty",
-        }
-        self.ios_headers.update(discovery_headers)
-
+        # 只有作者主页(补粉丝数/属地)和媒体下载会带登录态; 分享页一律不带 cookie,
+        # 实测带失效 cookie 请求会被直接打成验证码页
         if pconfig.xhs_ck:
             self.headers["cookie"] = pconfig.xhs_ck
             self.ios_headers["cookie"] = pconfig.xhs_ck
@@ -98,126 +98,29 @@ class XiaoHongShuParser(BaseParser):
     # https://www.xiaohongshu.com/discovery/item/68e8e3fa00000000030342ec?app_platform=android&ignoreEngage=true&app_version=9.6.0&share_from_user_hidden=true&xsec_source=app_share&type=normal&xsec_token=CBW9rwIV2qhcCD-JsQAOSHd2tTW9jXAtzqlgVXp6c52Sw%3D&author_share=1&xhsshare=QQ&shareRedId=ODs3RUk5ND42NzUyOTgwNjY3OTo8S0tK&apptime=1761372823&share_id=3b61945239ac403db86bea84a4f15124&share_channel=qq
     @handle("xiaohongshu.com", r"(explore|discovery/item)/(?P<query>(?P<xhs_id>[0-9a-zA-Z]+)\?[A-Za-z0-9._%&+=/#@-]+)")
     async def _parse_common(self, searched: re.Match[str]):
-        xhs_domain = "https://www.xiaohongshu.com"
         query, xhs_id = searched.group("query", "xhs_id")
-        explore_url = f"{xhs_domain}/explore/{query}"
 
-        # 分享页路径: QQ 内置浏览器 UA + discovery 分享页, 不需要登录态也不消耗 cookie
-        # (见 parse_share)。链接里没有 xsec_token 时分享页会跳到登录/失效页, 直接跳过。
-        token_matched = _XSEC_TOKEN.search(query)
-        xsec_token = token_matched.group("token") if token_matched else None
-        share_first = pconfig.xhs_share_first
-        if share_first is None:
-            # 自动: 未配置 cookie 时分享页是最省请求也最抗风控的路径, 配了则尊重原有链路
-            share_first = pconfig.xhs_ck is None
-        next_step = "parse_share" if xsec_token and not share_first else "parse_discovery"
+        # 分享页必须带 xsec_token(实测不带 token 的页面里没有笔记数据), 没有就直接报错
+        matched = _XSEC_TOKEN.search(query)
+        if not matched:
+            raise ParseException("小红书链接缺少 xsec_token, 请重新分享一次")
 
-        if xsec_token and share_first:
-            try:
-                return await self.parse_share(xhs_id, xsec_token)
-            except Exception as e:
-                logger.warning(f"parse_share (小红书分享页) failed, error: {e}, fallback to parse_explore")
-
-        try:
-            return await self.parse_explore(explore_url, xhs_id)
-        except Exception as e:
-            if "cookie" in self.headers:
-                logger.warning(f"parse_explore with cookie failed, error: {e}, retry without cookie")
-                anonymous_headers = {key: value for key, value in self.headers.items() if key.lower() != "cookie"}
-                try:
-                    return await self.parse_explore(explore_url, xhs_id, headers=anonymous_headers)
-                except Exception as anonymous_error:
-                    logger.warning(
-                        f"parse_explore without cookie failed, error: {anonymous_error}, fallback to {next_step}"
-                    )
-            else:
-                logger.warning(f"parse_explore failed, error: {e}, fallback to {next_step}")
-
-        if xsec_token and not share_first:
-            try:
-                return await self.parse_share(xhs_id, xsec_token)
-            except Exception as e:
-                logger.warning(f"parse_share (小红书分享页) failed, error: {e}, fallback to parse_discovery")
-
-        return await self.parse_discovery(f"{xhs_domain}/discovery/item/{query}")
-
-    async def parse_explore(self, url: str, xhs_id: str, headers: dict[str, str] | None = None):
-        from . import explore
-
-        request_headers = self.headers if headers is None else headers
-        async with AsyncClient(headers=request_headers, timeout=self.timeout) as client:
-            response = await client.get(url)
-            # may be 302
-            if response.status_code > 400:
-                response.raise_for_status()
-
-        html = response.text
-        raw = self._extract_initial_state_raw(html)
-
-        # Decode the JSON into InitialState struct
-        init_state = explore.decoder.decode(raw)
-
-        # Access: ["note"]["noteDetailMap"][xhs_id]["note"]
-        note_detail_wrapper = init_state.note.noteDetailMap.get(xhs_id)
-        if not note_detail_wrapper:
-            raise ParseException(f"can't find note detail for xhs_id: {xhs_id}")
-
-        note_detail = note_detail_wrapper.note
-        video_info = note_detail.video_cover_duration if note_detail.is_video else None
-
-        author = self.create_author(note_detail.nickname, note_detail.avatar_url)
-
-        extra = {}
-        if stats := note_detail.stats_panel:
-            extra["stats"] = stats
-        # 粉丝数 + IP 属地 (笔记里缺的从作者主页补), 模板渲染在作者名下方、时间前面
-        extra.update(await self._author_extra(note_detail.user, note_detail.ip_location))
-
-        result = self.result(
-            author=author,
-            title=note_detail.title,
-            text=_clean_description(note_detail.desc),
-            timestamp=note_detail.timestamp,
-            extra=extra,
-        )
-
-        # 添加视频内容
-        if video_info is not None:
-            result.video = self.create_video(*video_info)
-
-        # 添加图片内容(实况图同时发视频, 走合并转发)
-        elif note_detail.imageList:
-            has_live = False
-            for image in note_detail.imageList:
-                if live_url := image.live_video_url:
-                    result.contents.append(self.create_video(live_url, image.urlDefault))
-                    has_live = True
-                result.contents.append(self.create_image(image.urlDefault))
-            if has_live:
-                # 视频进合并转发, 且网格图跳过与图片重复的视频封面
-                result.extra["merge_videos"] = True
-                result.extra["live_photos"] = True
-
-        return result
+        return await self.parse_share(xhs_id, matched.group("token"))
 
     async def parse_share(self, xhs_id: str, xsec_token: str):
-        """QQ 内置浏览器 UA 请求分享页 (无需登录态 / cookie)
+        """QQ 内置浏览器 UA 请求 H5 分享页 (无需登录态 / cookie)
 
         小红书对"在 QQ 里点开分享链接"的落地页放行, 返回带完整 __INITIAL_STATE__
-        的 HTML, 因此既不需要 cookie 也不容易被拦成验证码页。
+        的 HTML; 实测 token 与 ``xsec_source`` 是否同源无关, 统一用 pc_share 即可。
         """
+        from . import discovery
+
         url = (
             f"https://www.xiaohongshu.com/discovery/item/{xhs_id}"
             # token 可能已经是百分号编码的, 原样拼接避免二次编码
             f"?xsec_token={xsec_token}&xsec_source=pc_share"
         )
-        return await self.parse_discovery(url, headers=self.qq_headers)
-
-    async def parse_discovery(self, url: str, headers: dict[str, str] | None = None):
-        from . import discovery
-
-        html = await self._fetch_html(url, self.ios_headers if headers is None else headers)
-        raw = self._extract_initial_state_raw(html)
+        raw = await self._fetch_initial_state(url)
         try:
             init_state = discovery.decoder.decode(raw)
             note_data = init_state.noteData.data.noteData
@@ -271,6 +174,30 @@ class XiaoHongShuParser(BaseParser):
 
         return result
 
+    async def _fetch_initial_state(self, url: str) -> str:
+        """请求分享页并取出 __INITIAL_STATE__
+
+        风控会间歇性把匿名请求打成验证码页(没有 __INITIAL_STATE__, 约 10KB),
+        这种是瞬时的, 隔一会儿重试通常就能拿到真正的分享页 —— 实测 PC explore
+        和 iPhone UA 的 H5 兜底路径此时也取不到数据, 所以只重试这一条路径。
+        """
+        error: Exception = ParseException("小红书分享页请求失败")
+
+        for attempt in range(SHARE_RETRY_TIMES):
+            if attempt:
+                await sleep(SHARE_RETRY_DELAY * attempt)
+
+            html = await self._fetch_html(url, self.qq_headers)
+            try:
+                return self._extract_initial_state_raw(html)
+            except ParseException as e:
+                error = e
+                logger.warning(
+                    f"小红书分享页第 {attempt + 1}/{SHARE_RETRY_TIMES} 次未取到数据, 稍后重试"
+                )
+
+        raise ParseException("小红书返回验证码页(可能触发风控), 请稍后重试") from error
+
     async def _fetch_html(self, url: str, headers: dict[str, str]) -> str:
         """请求笔记页面 HTML (独立 cookie jar, 不读环境代理)"""
         async with AsyncClient(
@@ -287,9 +214,8 @@ class XiaoHongShuParser(BaseParser):
     async def _author_extra(self, user: Any, region: str | None = None) -> dict[str, str]:
         """作者相关 extra: 粉丝数 + IP 属地.
 
-        `region` 是笔记自带的 IP 属地(只有 PC 笔记页面会给, H5 页面没有);
-        笔记里缺的项从作者主页补齐 —— 主页 H5 页面的 `profile.userInfo` 同时带
-        `fans` 和 `ipLocation`, 一次请求就够; 取不到的项目不写, 模板不渲染。
+        H5 分享页不给 IP 属地, 所以基本都靠作者主页 H5 页面的 `profile.userInfo`
+        (同时带 `fans` 和 `ipLocation`, 一次请求就够); 取不到的项目不写, 模板不渲染。
         """
         extra: dict[str, str] = {}
         if region:
