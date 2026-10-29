@@ -6,6 +6,7 @@ from typing import Any, ClassVar
 from urllib.parse import urlparse
 from collections.abc import AsyncGenerator
 
+import httpx
 from msgspec import convert
 from nonebot import logger
 from bilibili_api import HEADERS, Credential, select_client, request_settings
@@ -82,6 +83,45 @@ def order_download_urls(url: str, backup_url: list[str] | None) -> tuple[str, ..
     return tuple([*clean, *pcdn])
 
 
+# 直播间页面里服务端渲染(getInfoByRoom 同构数据)的注入位置
+_LIVE_SSR_PATTERN = re.compile(r"window\.__NEPTUNE_IS_MY_WAIFU__\s*=\s*")
+_LIVE_PAGE_URL = "https://live.bilibili.com/{room_id}"
+# 老版直播接口: 不带 buvid 也能访问, 风控比 getInfoByRoom 宽松
+_LIVE_ROOM_INFO_URL = "https://api.live.bilibili.com/room/v1/Room/get_info"
+_LIVE_ANCHOR_INFO_URL = "https://api.live.bilibili.com/live_user/v1/UserInfo/get_anchor_in_room"
+# 老接口返回的性别是数字, 转成 room_info 里的文案
+_LIVE_GENDER_MAP = {1: "男", 2: "女"}
+
+
+def extract_live_ssr_info(html: str) -> dict[str, Any] | None:
+    """从直播间页面的服务端渲染数据中提取房间信息
+
+    页面里有一段 ``window.__NEPTUNE_IS_MY_WAIFU__={...}`` 的 JSON, 其中
+    ``roomInfoRes.data`` 与直播信息接口 ``getInfoByRoom`` 的返回结构一致
+    (都含 room_info / anchor_info), 可以作为接口被风控时的兜底数据源。
+    提取失败时返回 None。
+    """
+    match = _LIVE_SSR_PATTERN.search(html)
+    if match is None:
+        return None
+    index = match.end()
+    while index < len(html) and html[index].isspace():
+        index += 1
+    try:
+        payload, _ = json.JSONDecoder().raw_decode(html, index)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    room_info_res = payload.get("roomInfoRes")
+    if not isinstance(room_info_res, dict) or room_info_res.get("code") != 0:
+        return None
+    data = room_info_res.get("data")
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
 class BilibiliParser(BaseParser):
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.BILIBILI, display_name="哔哩哔哩")
 
@@ -89,6 +129,9 @@ class BilibiliParser(BaseParser):
         {403, 404, 408, 425, 429, *range(500, 600)}
     )
     """B站 CDN 节点常见的可换线路重试状态码(限流/节点异常等)"""
+
+    LIVE_INFO_TIMEOUT: ClassVar[float] = 10.0
+    """直播信息兜底请求超时时间(s)"""
 
     def __init__(self):
         self.headers = HEADERS.copy()
@@ -313,13 +356,10 @@ class BilibiliParser(BaseParser):
 
     async def parse_live(self, room_id: int):
         """解析直播"""
-        from bilibili_api.live import LiveRoom
-
         from .live import RoomData
 
         credential = await self.credential
-        room = LiveRoom(room_display_id=room_id, credential=credential)
-        info_dict = await room.get_room_info()
+        info_dict = await self._get_live_room_info(room_id, credential)
 
         room_data = convert(info_dict, RoomData)
         contents: list[MediaContent] = []
@@ -350,6 +390,139 @@ class BilibiliParser(BaseParser):
             author=author,
             extra=extra,
         )
+
+    async def _get_live_room_info(
+        self,
+        room_id: int,
+        credential: Credential | None = None,
+    ) -> dict[str, Any]:
+        """获取直播间信息, 接口被风控(-352 等)时用兜底数据源
+
+        直播信息接口 ``getInfoByRoom`` 对请求的风控(尤其是 buvid 与 IP)比较严格,
+        会返回 ``-352``(风控校验失败), 导致直播链接解析直接报错。
+        这里在主接口失败后依次尝试:
+        1. 直播间页面的服务端渲染数据 (与接口返回结构一致)
+        2. 老版 ``Room/get_info`` + ``UserInfo/get_anchor_in_room`` 接口
+        """
+        from bilibili_api.live import LiveRoom
+
+        from .live import RoomData
+
+        room = LiveRoom(room_display_id=room_id, credential=credential)
+        primary_error: Exception | None = None
+        try:
+            return await room.get_room_info()
+        except Exception as exc:
+            primary_error = exc
+            logger.warning(f"获取直播间 {room_id} 信息失败({exc!r}), 尝试兜底数据源")
+
+        # 兜底 1: 页面 SSR 数据, 结构最完整
+        if info := await self._fetch_live_info_from_page(room_id):
+            # 页面结构可能变化, 先确认能转成 RoomData, 不完整则继续走老接口
+            try:
+                convert(info, RoomData)
+            except Exception:
+                logger.debug(f"直播间 {room_id} 页面 SSR 数据结构不完整", exc_info=True)
+            else:
+                logger.info(f"直播间 {room_id} 信息已从页面 SSR 数据兜底获取")
+                return info
+
+        # 兜底 2: 老接口, 不依赖 buvid 也不经过直播信息接口的风控
+        try:
+            info = await self._fetch_live_info_from_legacy_api(room_id)
+        except Exception as fallback_error:
+            raise ParseException(
+                f"获取直播间 {room_id} 信息失败"
+                f"(主接口: {primary_error!r}; 兜底接口: {fallback_error!r})"
+            ) from primary_error
+        logger.info(f"直播间 {room_id} 信息已从老版接口兜底获取")
+        return info
+
+    def _live_fallback_client(self, room_id: int) -> httpx.AsyncClient:
+        """兜底请求使用的 HTTP 客户端
+
+        直连且不读取环境代理: B 站是境内服务, 走本机代理(如 Clash 的海外节点)
+        反而容易被风控判成异常请求, 再次拿到 -352。
+        """
+        headers = self.headers.copy()
+        headers["Referer"] = f"https://live.bilibili.com/{room_id}"
+        return httpx.AsyncClient(
+            headers=headers,
+            timeout=self.LIVE_INFO_TIMEOUT,
+            follow_redirects=True,
+            trust_env=False,
+        )
+
+    async def _fetch_live_info_from_page(self, room_id: int) -> dict[str, Any] | None:
+        """从直播间页面的服务端渲染数据中获取房间信息, 失败返回 None"""
+        try:
+            async with self._live_fallback_client(room_id) as client:
+                resp = await client.get(_LIVE_PAGE_URL.format(room_id=room_id))
+                resp.raise_for_status()
+            info = extract_live_ssr_info(resp.text)
+        except Exception:
+            logger.debug(f"直播间 {room_id} 页面 SSR 数据兜底失败", exc_info=True)
+            return None
+        if info is None:
+            logger.debug(f"直播间 {room_id} 页面未找到 SSR 房间信息")
+        return info
+
+    async def _fetch_live_info_from_legacy_api(self, room_id: int) -> dict[str, Any]:
+        """老接口兜底: Room/get_info 取房间信息, UserInfo/get_anchor_in_room 取主播信息
+
+        返回结构与 ``getInfoByRoom`` 一致, 便于上层统一用 ``RoomData`` 转换。
+        """
+        async with self._live_fallback_client(room_id) as client:
+            room_resp = await client.get(_LIVE_ROOM_INFO_URL, params={"room_id": room_id})
+            room_resp.raise_for_status()
+            anchor_resp = await client.get(_LIVE_ANCHOR_INFO_URL, params={"roomid": room_id})
+            anchor_resp.raise_for_status()
+
+        room_payload: dict[str, Any] = room_resp.json()
+        room_data = room_payload.get("data")
+        if room_payload.get("code") != 0 or not isinstance(room_data, dict):
+            raise ParseException(
+                f"获取直播间 {room_id} 信息失败: {room_payload.get('message') or room_payload.get('code')}"
+            )
+
+        anchor_payload: dict[str, Any] = anchor_resp.json()
+        anchor_data = anchor_payload.get("data")
+        anchor = anchor_data.get("info") if isinstance(anchor_data, dict) else None
+        if not isinstance(anchor, dict):
+            # 主播信息拿不到不影响解析, 只记录日志
+            logger.debug(
+                f"获取直播间 {room_id} 主播信息失败: "
+                f"{anchor_payload.get('message') or anchor_payload.get('code')}"
+            )
+            anchor = {}
+
+        level = anchor.get("level")
+        if not isinstance(level, int):
+            level = 0
+
+        return {
+            "room_info": {
+                "title": room_data.get("title") or "",
+                "cover": room_data.get("user_cover") or "",
+                "keyframe": room_data.get("keyframe") or "",
+                "tags": room_data.get("tags") or "",
+                "area_name": room_data.get("area_name") or "",
+                "parent_area_name": room_data.get("parent_area_name") or "",
+                "uid": room_data.get("uid"),
+            },
+            "anchor_info": {
+                "base_info": {
+                    "uname": anchor.get("uname") or "",
+                    "face": anchor.get("face") or "",
+                    "gender": _LIVE_GENDER_MAP.get(anchor.get("gender"), "保密"),
+                },
+                "live_info": {
+                    "level": level,
+                    "level_color": 0,
+                    "score": 0,
+                },
+            },
+        }
 
     async def parse_favlist(self, fav_id: int):
         """解析收藏夹"""
