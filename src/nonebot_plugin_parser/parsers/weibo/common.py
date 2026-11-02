@@ -1,6 +1,6 @@
 from re import sub
 
-from msgspec import Struct
+from msgspec import Struct, field
 from msgspec.json import Decoder
 
 from ..utils import fmt_stat
@@ -13,6 +13,10 @@ class LargeInPic(Struct):
 class Pic(Struct):
     url: str
     large: LargeInPic
+    type: str | None = None
+    """图片类型, 实况图为 livephoto"""
+    video_src: str | None = field(name="videoSrc", default=None)
+    """实况图视频地址(播放接口, 请求时会 302 到带签名的 .mov 直链)"""
 
 
 class Urls(Struct):
@@ -63,6 +67,8 @@ class WeiboData(Struct):
     status_title: str | None = None
     pics: list[Pic] | None = None
     page_info: PageInfo | None = None
+    live_photo: list[str] | None = None
+    """实况图视频地址列表(与 pics 顺序对应, 部分接口只给这个字段)"""
     region_name: str | None = None
     """IP 属地 (接口返回形如 发布于 河南)"""
     retweeted_status: "WeiboData | None" = None  # 转发微博
@@ -131,6 +137,24 @@ class WeiboData(Struct):
         if self.pics:
             return [x.large.url for x in self.pics]
         return []
+
+    @property
+    def live_photos(self) -> list[tuple[str, str]]:
+        """实况图列表: (图片链接, 视频播放地址)"""
+        if not self.pics:
+            return []
+        video_urls: list[str | None] = [pic.video_src for pic in self.pics]
+        if not any(video_urls) and self.live_photo:
+            # 兼容: 部分接口只返回顶层 live_photo 列表, 与 pics 顺序对应
+            video_urls = [
+                self.live_photo[index] if index < len(self.live_photo) else None
+                for index in range(len(self.pics))
+            ]
+        return [
+            (pic.large.url, video_url)
+            for pic, video_url in zip(self.pics, video_urls)
+            if video_url
+        ]
 
     @property
     def url(self) -> str:

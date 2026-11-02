@@ -149,6 +149,48 @@ async def encode_video_to_h264(video_path: Path) -> Path:
     return output_path
 
 
+async def remux_to_mp4(video_path: Path) -> Path:
+    """将视频无损转封装为 mp4 (如微博实况图的 QuickTime .mov)
+
+    QQ 等客户端对 QuickTime 容器兼容性差, 转成 mp4 更好发送;
+    码流本身(H.264/AAC)不需要重新编码, 只换容器, 速度快且无损。
+    """
+    if video_path.suffix.lower() == ".mp4":
+        return video_path
+
+    output_path = video_path.with_suffix(".mp4")
+    if output_path.exists():
+        # 之前已转封装过(调用方可能又下载了一份原视频), 清掉多余的原文件
+        await safe_unlink(video_path)
+        return output_path
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        # 只要视频/音频流, 丢弃 mov 里的 metadata 等数据流
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    try:
+        await exec_ffmpeg_cmd(cmd)
+    except Exception:
+        # ffmpeg 失败时会留下半成品, 删除以免下次被当成成功结果
+        await safe_unlink(output_path)
+        raise
+    logger.success(f"视频转封装为 mp4 成功: {output_path}, {fmt_size(output_path)}")
+    await safe_unlink(video_path)
+    return output_path
+
+
 async def extract_video_first_frame(video_path: Path) -> Path:
     """从视频中提取第一帧"""
     first_frame_path = video_path.with_suffix(".jpg")

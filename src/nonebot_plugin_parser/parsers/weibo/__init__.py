@@ -2,14 +2,18 @@ from re import Match
 from time import time
 from uuid import uuid4
 from typing import ClassVar
+from asyncio import create_task
+from pathlib import Path
 
 from bs4 import Tag, BeautifulSoup
+from nonebot import logger
 from httpx import Cookies, AsyncClient
 
 from . import common, article
 from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle
 from ..data import ImageContent
 from ..utils import followers_extra
+from ...utils import generate_file_name, remux_to_mp4
 
 
 class WeiBoParser(BaseParser):
@@ -225,15 +229,58 @@ class WeiBoParser(BaseParser):
                 data.cover_url,
                 data.duration,
             )
-        # 添加图片内容
-        if image_urls := data.image_urls:
+
+        # 图片 / 实况图
+        live_photos = data.live_photos
+        if live_photos:
+            # 实况图: 图片与短视频成对, 视频走合并转发
+            live_video_by_image = dict(live_photos)
+            for image_url in data.image_urls:
+                if video_url := live_video_by_image.get(image_url):
+                    result.contents.append(self._create_live_photo_video(image_url, video_url))
+                result.contents.append(self.create_image(image_url))
+            result.extra["merge_videos"] = True
+            result.extra["live_photos"] = True
+        elif image_urls := data.image_urls:
             result.contents.extend(self.create_images(image_urls))
 
         # 转发内容
         if data.retweeted_status:
             result.repost = self._collect_result(data.retweeted_status, is_repost=True)
+            if result.repost.extra.get("live_photos"):
+                # 转发里的实况图视频也要进主卡片所在的合并转发
+                result.extra["merge_videos"] = True
+                result.extra["live_photos"] = True
 
         return result
+
+    def _create_live_photo_video(self, image_url: str, video_url: str):
+        """创建实况图视频内容
+
+        微博实况图的视频是 QuickTime .mov (h264/aac), 下载后转封装成 mp4,
+        QQ 等客户端对 mov 容器兼容性较差; 转封装失败时退回原视频。
+        """
+
+        async def prepare_video() -> Path:
+            # 播放接口会 302 到带签名的 .mov 直链, 下载时保留 .mov 后缀以便转封装
+            raw_name = generate_file_name(video_url, ".mov")
+            # 之前已转封装好 mp4 的话直接复用, 避免重复下载 .mov
+            mp4_path = (self.downloader.cache_dir / raw_name).with_suffix(".mp4")
+            if mp4_path.exists():
+                return mp4_path
+
+            path = await self.downloader.download_video(
+                video_url,
+                video_name=raw_name,
+                ext_headers=self.headers,
+            )
+            try:
+                return await remux_to_mp4(path)
+            except Exception as e:  # noqa: BLE001 - 转封装失败不影响发送原视频
+                logger.warning(f"微博实况图视频转封装 mp4 失败, 使用原视频: {e}")
+                return path
+
+        return self.create_video(create_task(prepare_video()), image_url)
 
     def _base62_encode(self, number: int) -> str:
         """将数字转换为 base62 编码"""
