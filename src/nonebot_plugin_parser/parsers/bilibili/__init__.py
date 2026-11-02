@@ -296,13 +296,26 @@ class BilibiliParser(BaseParser):
         # 下载图片
         author = self.create_author(dynamic_info.name, dynamic_info.avatar)
         contents: list[MediaContent] = []
-        contents.extend(self.create_images(dynamic_info.image_urls))
+        live_photos = dynamic_info.live_photos
+        if live_photos:
+            # 实况图: 图片与短视频成对, 视频走合并转发
+            live_video_by_image = dict(live_photos)
+            for image_url in dynamic_info.image_urls:
+                if video_url := live_video_by_image.get(image_url):
+                    contents.append(self.create_video(video_url, image_url))
+                contents.append(self.create_image(image_url))
+        else:
+            contents.extend(self.create_images(dynamic_info.image_urls))
 
         repost = None
         if dynamic_info.type == "DYNAMIC_TYPE_FORWARD" and dynamic_info.orig is not None:
             repost = await self._parse_dynamic_info(dynamic_info.orig)
 
         extra: dict[str, Any] = {"content_type": "动态"}
+        if live_photos or (repost is not None and repost.extra.get("live_photos")):
+            # 视频进合并转发, 且网格图跳过与图片重复的视频封面
+            extra["merge_videos"] = True
+            extra["live_photos"] = True
         if stats := dynamic_info.stats_panel:
             extra["stats"] = stats
         # 粉丝数, 模板渲染在作者名下方、时间前面
@@ -346,11 +359,31 @@ class BilibiliParser(BaseParser):
             extra=followers_extra(await self._fetch_follower_count(opus_data.mid)),
         )
 
-        for node in opus_data.extract_nodes():
+        nodes = list(opus_data.extract_nodes())
+        has_live_photos = any(not isinstance(node, str) and node.live_url for node in nodes)
+        texts: list[str] = []
+        for node in nodes:
             if isinstance(node, str):
+                texts.append(node)
+                # 文字仍进 graphics, 消息里随合并转发一起发出
                 result.graphics.append(node)
+                continue
+            if node.live_url:
+                # 实况图: 图片与短视频成对, 视频走合并转发
+                result.contents.append(self.create_video(node.live_url, node.url))
+            if has_live_photos:
+                # 有实况图时图片改由 contents 走网格渲染
+                result.contents.append(self.create_image(node.url, alt=node.alt))
             else:
                 result.graphics.append(self.create_image(node.url, alt=node.alt))
+
+        if has_live_photos:
+            # 卡片模板在存在网格图片时不会渲染 graphics, 文字用 text 展示
+            if merged_text := "\n".join(text for text in texts if text):
+                result.text = merged_text
+            # 视频进合并转发, 且网格图跳过与图片重复的视频封面
+            result.extra["merge_videos"] = True
+            result.extra["live_photos"] = True
 
         return result
 

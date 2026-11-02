@@ -53,11 +53,13 @@ class OpusImage(Struct):
     """图文动态图片信息"""
 
     url: str
+    """图片链接"""
+    live_url: str | None = None
+    """实况图视频链接(有值则为实况图)"""
     # width: int
     # height: int
     # size: float
     # aigc: dict[str, Any] | None = None
-    # live_url: str | None = None
 
 
 class OpusSummary(Struct):
@@ -106,13 +108,23 @@ class DynamicMajor(Struct):
         return None
 
     @property
+    def pics(self) -> list[OpusImage]:
+        """获取图文图片列表(实况图会带 live_url)"""
+        if self.type == "MAJOR_TYPE_OPUS" and self.opus:
+            return self.opus.pics
+        return []
+
+    @property
     def image_urls(self) -> list[str]:
         """获取图片URL列表"""
-        if self.type == "MAJOR_TYPE_OPUS" and self.opus:
-            return [pic.url for pic in self.opus.pics]
-        elif self.type == "MAJOR_TYPE_ARCHIVE" and self.archive and self.archive.cover:
+        if self.type == "MAJOR_TYPE_ARCHIVE" and self.archive and self.archive.cover:
             return [self.archive.cover]
-        return []
+        return [pic.url for pic in self.pics]
+
+    @property
+    def live_photos(self) -> list[tuple[str, str]]:
+        """获取实况图列表: (图片链接, 视频链接)"""
+        return [(pic.url, pic.live_url) for pic in self.pics if pic.live_url]
 
     @property
     def cover_url(self) -> str | None:
@@ -233,6 +245,13 @@ class DynamicInfo(Struct):
         """获取图片URL列表"""
         if major := self.modules.major:
             return major.image_urls
+        return []
+
+    @property
+    def live_photos(self) -> list[tuple[str, str]]:
+        """获取实况图列表: (图片链接, 视频链接)"""
+        if major := self.modules.major:
+            return major.live_photos
         return []
 
     @property
