@@ -134,7 +134,9 @@ class VideoInfo(Struct):
             page = self.pages[page_idx]
             title += f" | 分集 - {page.part}"
             duration = page.duration
-            cover = page.first_frame
+            # 分 P 首帧(first_frame)经常是黑场/淡入帧, 渲染出来像"没有封面";
+            # 优先用官方封面 pic, 只有 pic 缺失时才退回分 P 首帧
+            cover = self.pic or page.first_frame
             timestamp = page.ctime
 
         return PageInfo(
