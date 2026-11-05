@@ -92,6 +92,12 @@ _LIVE_ANCHOR_INFO_URL = "https://api.live.bilibili.com/live_user/v1/UserInfo/get
 # 老接口返回的性别是数字, 转成 room_info 里的文案
 _LIVE_GENDER_MAP = {1: "男", 2: "女"}
 
+# 国际版/多语言站点会在域名后插入语言前缀, 如 /zh-Hans/、/zh-Hant/、/en-US/;
+# 国际版 App 分享的 b23.tv 短链重定向后就是 https://www.bilibili.com/zh-Hans/video/BV...
+_LOCALE_PATH = r"(?:/[a-zA-Z]{2,3}(?:-[a-zA-Z]{2,4}){0,2})?"
+# 哔哩哔哩主站域名 (含可选语言前缀)
+_BILI_WEB = r"bilibili\.com" + _LOCALE_PATH
+
 
 def extract_live_ssr_info(html: str) -> dict[str, Any] | None:
     """从直播间页面的服务端渲染数据中提取房间信息
@@ -146,7 +152,10 @@ class BilibiliParser(BaseParser):
         return await self.parse_with_redirect(url)
 
     @handle("BV", r"^(?P<bvid>BV[0-9a-zA-Z]{10})(?:\s)?(?P<page_num>\d{1,3})?$")
-    @handle("/BV", r"bilibili\.com(?:/video)?/(?P<bvid>BV[0-9A-Za-z]{10})(?:.*?[?&]p=(?P<page_num>\d{1,3}))?")
+    @handle(
+        "/BV",
+        _BILI_WEB + r"(?:/video)?/(?P<bvid>BV[0-9A-Za-z]{10})(?:.*?[?&]p=(?P<page_num>\d{1,3}))?",
+    )
     async def _parse_bv(self, searched: Match[str]):
         """解析视频信息"""
         bvid = str(searched.group("bvid"))
@@ -155,7 +164,10 @@ class BilibiliParser(BaseParser):
         return await self.parse_video(bvid=bvid, page_num=page_num)
 
     @handle("av", r"^av(?P<avid>\d{6,})(?:\s)?(?P<page_num>\d{1,3})?$")
-    @handle("/av", r"bilibili\.com(?:/video)?/av(?P<avid>\d{6,})(?:.*?[?&]p=(?P<page_num>\d{1,3}))?")
+    @handle(
+        "/av",
+        _BILI_WEB + r"(?:/video)?/av(?P<avid>\d{6,})(?:.*?[?&]p=(?P<page_num>\d{1,3}))?",
+    )
     async def _parse_av(self, searched: Match[str]):
         """解析视频信息"""
         avid = int(searched.group("avid"))
@@ -163,15 +175,15 @@ class BilibiliParser(BaseParser):
 
         return await self.parse_video(avid=avid, page_num=page_num)
 
-    @handle("/dynamic/", r"bilibili\.com/dynamic/(?P<dynamic_id>\d+)")
-    @handle("/opus/", r"bilibili\.com/opus/(?P<dynamic_id>\d+)")
-    @handle("t.bili", r"t\.bilibili\.com/(?P<dynamic_id>\d+)")
+    @handle("/dynamic/", _BILI_WEB + r"/dynamic/(?P<dynamic_id>\d+)")
+    @handle("/opus/", _BILI_WEB + r"/opus/(?P<dynamic_id>\d+)")
+    @handle("t.bili", r"t\.bilibili\.com" + _LOCALE_PATH + r"/(?P<dynamic_id>\d+)")
     async def _parse_dynamic(self, searched: Match[str]):
         """解析动态信息"""
         dynamic_id = int(searched.group("dynamic_id"))
         return await self.parse_dynamic_or_opus(dynamic_id)
 
-    @handle("live.bili", r"live\.bilibili\.com/(?P<room_id>\d+)")
+    @handle("live.bili", r"live\.bilibili\.com" + _LOCALE_PATH + r"/(?P<room_id>\d+)")
     async def _parse_live(self, searched: Match[str]):
         """解析直播信息"""
         room_id = int(searched.group("room_id"))
@@ -183,7 +195,7 @@ class BilibiliParser(BaseParser):
         fav_id = int(searched.group("fav_id"))
         return await self.parse_favlist(fav_id)
 
-    @handle("/read/", r"bilibili\.com/read/cv(?P<read_id>\d+)")
+    @handle("/read/", _BILI_WEB + r"/read/cv(?P<read_id>\d+)")
     async def _parse_read(self, searched: Match[str]):
         """解析专栏信息"""
         from bilibili_api.article import Article
