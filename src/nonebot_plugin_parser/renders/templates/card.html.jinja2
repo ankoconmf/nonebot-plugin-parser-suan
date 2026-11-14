@@ -637,7 +637,7 @@
               font-weight: 700;
             }
 
-            /* ──────── 推特原比例并列 (3/4图) ──────── */
+            /* ──────── 推特原比例并列 (2~20 图) ──────── */
             .twitter-aspect-row {
               display: flex;
               gap: 4px;
@@ -648,9 +648,11 @@
               min-width: 0;
               overflow: hidden;
               border-radius: var(--radius-sm);
-              border: 1px solid var(--grid-stroke);
+              /* 用 box-shadow 描边而非 border: JS 按原比例算宽度后, border 会额外占用布局宽度,
+                 图多时 (如 20 张) 每张多吃 2px, 累计把最后几张挤出卡片 */
               box-shadow:
-                0 0 0 1px var(--grid-outline),
+                0 0 0 1px var(--grid-stroke),
+                0 0 0 2px var(--grid-outline),
                 0 10px 24px -7px rgba(0, 0, 0, 0.30),
                 0 22px 38px -18px rgba(0, 0, 0, 0.36);
             }
@@ -1042,19 +1044,20 @@
                 {% if video %}
                 {% elif imgs %}
                     {% set count = imgs|length %}
-                    {% set is_twitter_aspect_row = (result.platform.name == 'twitter') and (count in [2, 3, 4]) %}
+                    {% set is_twitter_aspect_row = (result.platform.name == 'twitter') and (2 <= count <= 20) %}
                     {% if count == 1 %}
                         {% set img = imgs[0] %}
                         <div class="image-container"><img src="{{ img.uri | safe }}" class="single-image" alt="image" /></div>
                     {% elif is_twitter_aspect_row %}
-                        {# 推特2/3/4图: 默认显示正方形网格, JS检测为长图后切换到原比例并列 #}
+                        {# 推特2~20图: 默认显示正方形网格, JS检测为长图后切换到原比例并列 #}
                         <div class="twitter-img-grid">
                             {% set cols = 2 if count in [2, 4] else 3 %}
                             <div class="image-grid cols-{{ cols }}">
-                                {% for img in imgs %}
+                                {% for img in imgs[:9] %}
                                     {% set img_uri = (img.uri if img.uri else fallback_pic) %}
                                     <div class="grid-item">
                                         <img src="{{ img_uri | safe }}" alt="image" />
+                                        {% if loop.last and count > 9 %}<div class="more-count">+{{ count - 9 }}</div>{% endif %}
                                     </div>
                                 {% endfor %}
                             </div>
@@ -1282,12 +1285,19 @@
             Promise.all(imgs.map(function(img) {
                 return img.complete ? Promise.resolve() : new Promise(function(r) { img.onload = r; img.onerror = r; });
             })).then(function() {
-                var allPortrait = imgs.every(function(img) { return img.naturalHeight > img.naturalWidth; });
+                // 长图判定: 2~4 图沿用"全竖图"即可切换; >4 图还要求整体够长(平均宽/高 <= 0.5).
+                // 用平均值而不是逐张判断: 一张长图常被切成多条, 首尾两片会明显更宽,
+                // 逐张要求会因为这些边角料整条退回网格 (如 20 张里 17 张窄条 + 首尾各一片宽图)
+                var ratios = imgs.map(function(img) {
+                    return img.naturalHeight ? img.naturalWidth / img.naturalHeight : Infinity;
+                });
+                var allPortrait = ratios.every(function(r) { return r < 1; });
                 if (!allPortrait) return;
+                var meanRatio = ratios.reduce(function(a, b) { return a + b; }, 0) / ratios.length;
+                if (imgs.length > 4 && meanRatio > 0.5) return;
                 gridWrap.style.display = 'none';
                 aspectWrap.style.display = '';
                 var availableWidth = row.clientWidth - gap * (imgs.length - 1);
-                var ratios = imgs.map(function(img) { return img.naturalWidth / img.naturalHeight; });
                 var commonHeight = availableWidth / ratios.reduce(function(a, b) { return a + b; }, 0);
                 imgs.forEach(function(img, i) {
                     img.style.width = (ratios[i] * commonHeight) + 'px';
