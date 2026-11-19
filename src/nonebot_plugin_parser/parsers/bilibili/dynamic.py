@@ -12,7 +12,8 @@ class AuthorInfo(Struct):
     face: str
     mid: int
     pub_time: str
-    pub_ts: int
+    pub_ts: int | str
+    """发布时间戳 (部分动态接口返回字符串, 如 '1795089673')"""
     # jump_url: str
     # following: bool = False
     # official_verify: dict[str, Any] | None = None
@@ -162,8 +163,8 @@ class DynamicModule(Struct):
 
     @property
     def pub_ts(self) -> int:
-        """获取发布时间戳"""
-        return self.module_author.pub_ts
+        """获取发布时间戳 (接口可能返回字符串, 统一转 int)"""
+        return int(self.module_author.pub_ts)
 
     @property
     def _major_info(self) -> dict[str, Any] | None:

@@ -11,7 +11,8 @@ class Author(Struct):
     face: str
     mid: int
     pub_time: str
-    pub_ts: str
+    pub_ts: int | str
+    """发布时间戳 (接口可能返回字符串或整数)"""
 
 
 class Image(Struct):
