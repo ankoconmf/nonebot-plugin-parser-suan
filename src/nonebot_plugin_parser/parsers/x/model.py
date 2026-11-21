@@ -55,6 +55,44 @@ class TweetCard(Struct):
     legacy: CardLegacy | None = None
 
 
+class CashtagAttachment(Struct):
+    """$cashtag 附件: 只带代码, 行情由前端另外获取"""
+
+    rest_id: str = ""
+    """例如 '$NVDA'"""
+    size_variant: int = 0
+
+
+class SymbolTagInfo(Struct):
+    """股票代码的元信息 (tag.info.info)"""
+
+    name: str = ""
+    """公司名, 例如 NVIDIA Corporation"""
+    ticker: str = ""
+    """代码, 例如 NVDA"""
+
+
+class SymbolTagInner(Struct):
+    info: SymbolTagInfo | None = None
+
+
+class SymbolTag(Struct):
+    info: SymbolTagInner | None = None
+
+
+class SymbolEntity(Struct):
+    """entities.symbols 里的一项"""
+
+    text: str = ""
+    indices: tuple[int, int] = (0, 0)
+    tag: SymbolTag | None = None
+
+
+class TweetEntities(Struct):
+    symbols: list[SymbolEntity] = field(default_factory=list)
+    """$cashtag 实体, 带公司名"""
+
+
 class UnifiedText(Struct):
     content: str = ""
 
@@ -475,6 +513,8 @@ class TweetLegacy(Struct):
     """会话 (根推文) id"""
     extended_entities: ExtendedEntities | None = None
     """媒体"""
+    entities: TweetEntities | None = None
+    """实体 ($cashtag 的代码/公司名在这里)"""
 
     def medias(self, create_image: Any, create_video: Any) -> list[MediaContent]:
         """媒体 -> 本地内容项"""
@@ -550,6 +590,29 @@ class Tweet(Struct):
     """被引用推文 (转发时带评论)"""
     retweeted_status_result: TweetEntry | None = None
     """被转发推文 (直接转发)"""
+    cashtag_attachments: list[CashtagAttachment] = field(default_factory=list)
+    """推文附带的 $cashtag 列表 (只有代码, 无行情)"""
+
+    def cashtags(self) -> list[tuple[str, str]]:
+        """提取 (代码, 公司名) 列表, 顺序按出现先后, 去重
+
+        公司名取自 entities.symbols, 缺失时留空由行情接口回填。
+        """
+        names: dict[str, str] = {}
+        for symbol in (self.legacy.entities.symbols if self.legacy.entities else []):
+            info = symbol.tag.info.info if (symbol.tag and symbol.tag.info) else None
+            ticker = ((info.ticker if info else "") or symbol.text).upper().lstrip("$")
+            if ticker:
+                names[ticker] = info.name if info else ""
+
+        result: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for attachment in self.cashtag_attachments:
+            ticker = attachment.rest_id.upper().lstrip("$")
+            if ticker and ticker not in seen:
+                seen.add(ticker)
+                result.append((ticker, names.get(ticker, "")))
+        return result
 
     def needs_translation(self) -> bool:
         """是否需要翻译: X 标记可翻译, 且原文不是中文"""
@@ -646,6 +709,7 @@ class TweetData(Struct):
             article=self.article,
             quoted_status_result=self.quoted_status_result,
             retweeted_status_result=self.retweeted_status_result,
+            cashtag_attachments=self.cashtag_attachments,
         )
 
     core: TweetCore | None = None
@@ -658,6 +722,8 @@ class TweetData(Struct):
     article: Article | None = None
     quoted_status_result: TweetEntry | None = None
     retweeted_status_result: TweetEntry | None = None
+    cashtag_attachments: list[CashtagAttachment] = field(default_factory=list)
+    """$cashtag 附件 (只有代码, 行情另取)"""
 
 
 class TweetEntry(Struct):

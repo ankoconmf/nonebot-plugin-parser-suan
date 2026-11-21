@@ -35,6 +35,7 @@ from msgspec.json import Decoder, encode
 from nonebot import logger
 
 from .model import FxResponse, FxTweet, Poll, PollChoice, Tweet, TweetEntry
+from .stock import fetch_quotes
 from .util import LinkCardData, parse_link_card, parse_poll
 from ..base import BaseParser, PlatformEnum, ParseException, handle
 from ..cookie import ck2dict
@@ -427,6 +428,13 @@ class TwitterParser(BaseParser):
                 bookmark_count=legacy.bookmark_count,
             )
             extra["source_id"] = f"@{user.core.screen_name}"
+            # $cashtag 股票组件: 推文只带代码, 行情这里补; 失败时静默不渲染
+            try:
+                if tickers := tweet.cashtags():
+                    if stocks := await fetch_quotes(tickers):
+                        extra["stocks"] = stocks
+            except Exception:  # noqa: BLE001 - 行情只是锦上添花, 绝不能影响解析
+                logger.opt(exception=True).debug("X 股票行情处理失败")
         # 粉丝数, 模板渲染在作者名下方、时间前面 (引用/转发的推文显示原推作者)
         extra.update(followers_extra(user.followers_count))
 
